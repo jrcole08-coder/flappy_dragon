@@ -329,6 +329,30 @@ def glow(radius, color):
     g = _glow_cache[key]
   return g
 
+def grayscale(surf):
+  """a greyed copy of a surface. Uses pygame.transform.grayscale when this pygame has it
+  (2.1.4+), otherwise does it pixel by pixel, so it also works with the older pygame in the phone app."""
+  fn = getattr(pygame.transform, 'grayscale', None)
+  if fn is not None:
+    try:
+      return fn(surf)
+    except Exception:
+      pass
+  out = surf.copy()
+  w, h = out.get_size()
+  out.lock()
+  try:
+    for y in range(h):
+      for x in range(w):
+        r, g, b, a_ = out.get_at((x, y))
+        if a_:
+          v = (r * 77 + g * 150 + b * 29) >> 8
+          out.set_at((x, y), (v, v, v, a_))
+  finally:
+    out.unlock()
+  return out
+
+
 def add_glow(surf, cx, cy, radius, color):
   surf.blit(glow(radius, color), (cx - radius, cy - radius), special_flags=pygame.BLEND_RGB_ADD)
 

@@ -1240,7 +1240,7 @@ def ink_sketch(frames):
   """sepia ink-drawing versions of a creature's animation frames"""
   out = []
   for f in frames:
-    g = pygame.transform.grayscale(f) if hasattr(pygame.transform, 'grayscale') else f.copy()
+    g = grayscale(f)
     g.fill((36, 36, 36), special_flags=pygame.BLEND_RGB_ADD)
     g.fill((206, 160, 112), special_flags=pygame.BLEND_RGB_MULT)
     out.append(g)

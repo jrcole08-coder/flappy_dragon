@@ -2,6 +2,7 @@
 then smooth-scaled down once and cached, so the small sprites get soft, detailed edges."""
 import math, random
 import pygame
+from fd_core import grayscale
 
 _C = {}
 def _sh(c, f):
@@ -241,7 +242,7 @@ def life_heart(full, fr=0, size=40):
     if not full:
       out = []
       for f in fs:
-        g = pygame.transform.grayscale(f)
+        g = grayscale(f)                              # (works on the phone app's older pygame too)
         g.fill((96, 90, 100, 255), special_flags=pygame.BLEND_RGBA_MULT)
         out.append(g)
       fs = out
