@@ -5,6 +5,7 @@ from fd_satyr import satyr_frame
 from fd_extra import extra_frame
 from fd_phoenix import phx_frame, phx_frames
 from fd_witch import ws_frame, ws_count
+from fd_spider import sp_frame, sp_count
 from fd_night import night_frame, night_count
 from fd_hydra import hyd_frame, hyd_mouths, hyd_frames
 from fd_beholder import beh_frame, beh_frames, beh_point, beam_line, BEAM_HALF as BEH_HALF, SCALE as BEH_SCALE, EYE as BEH_EYE
@@ -20,8 +21,17 @@ import random
 from fd_mages import mage_frame, mage_frames
 from fd_art import *
 import fd_ui as UIX
+import fd_extras as FX
 import fd_pixart as PX
 import fd_core as _FDC
+import fd_modes as MODE
+import fd_ground as GATK
+import fd_foes2 as NF
+import fd_boss2 as NB
+import fd_perks as PERK
+import fd_achieve as ACH
+import fd_goart as GOA
+import fd_isles as ISL
 from fd_sound import AUDIO
 
 BOLT_CACHE = {}
@@ -49,6 +59,18 @@ BOSSBAR_CACHE = {}
 CRESCENTS = {}
 SCALED = {}
 
+
+_BIGC = {}
+
+
+def big_crystal(fr):
+  """the power-up crystal 15% larger than its art"""
+  src = powerup_sprite(fr)
+  k = (id(src), fr)
+  spr = _BIGC.get(k)
+  if spr is None:
+    spr = _BIGC[k] = pygame.transform.smoothscale(src, (int(src.get_width() * 1.15), int(src.get_height() * 1.15)))
+  return spr
 
 def scaled_frame(kind, fr, k):
   key = (kind, fr, k)
@@ -168,6 +190,10 @@ class GameDraw:
       self.draw_lair()
     elif st == "WORLDS":
       self.draw_worlds()
+    elif st == "MODES":
+      self.draw_modes()
+    elif st == "ACHIEVE":
+      self.draw_achieve()
     elif st == "QUESTS":
       self.draw_quests()
     elif st == "REPORT":
@@ -205,16 +231,54 @@ class GameDraw:
     ox = oy = 0
     if self.shake_t > 0 and self.shake_i:
       ox, oy = random.randint(-self.shake_i, self.shake_i), random.randint(-self.shake_i, self.shake_i)
+    if st in ("PLAYING", "PAUSED"):                    # floating scores, combo and boss hit flash
+      FX.juice_draw(gs, self, small_font, hud_font)
+    if st == "PLAYING":
+      FX.tutorial_draw(gs, self, small_font)
+      if getattr(self, 'mode', '') == 'tutorial':
+        MODE.tutorial_draw(gs, self, (small_font, tiny_font, button_font), panel, (PANEL_DARK, GOLD_BORDER, PARCHMENT, BANNER_GOLD))
+    if st == "MENU":                                   # which build this is, for bug reports
+      vt = text(tiny_font, FX.BUILD, (220, 200, 170))
+      gs.blit(vt, vt.get_rect(bottomright=(WIDTH - 12, HEIGHT - 8)))
     if self.toast_t > 0:
       self.toast_t -= 1
       img = text(small_font, self.toast_msg, PARCHMENT)
-      tr = img.get_rect(center=(WIDTH // 2, GROUND_Y - 70)).inflate(34, 16)
+      tr = img.get_rect(center=(WIDTH // 2, 18 if self.state == "GAMEOVER" else GROUND_Y - 70)).inflate(34, 12)
       panel(gs, tr, PANEL_DARK, 240, GOLD_BORDER, 2, 8)
       gs.blit(img, img.get_rect(center=tr.center))
     self.present(ox, oy)
 
   def draw_background(self):
     gs = game_surface
+    if UIX.art_ok('level'):                              # your painted level layers
+      night = not self.day
+      wk = self.world()
+      sky_img = UIX.level_sky(wk, night)
+      for y0, y1 in UIX.sky_spans(wk):                    # only where scenery doesn't cover the sky
+        gs.blit(sky_img, (0, y0), (0, y0, WIDTH, y1 - y0))
+      if night:
+        for x, y, ph in self.twinkle[::3]:
+          r = 1 + int((math.sin(self.anim * 3 + ph) + 1) * 0.9)
+          pygame.draw.circle(gs, STAR_WHITE, (x, y), r)
+      sky = UIX.sky_ok()
+      if sky:                                              # your painted sun / moon and clouds
+        orb = UIX.sky_orb(night, wk)
+        gs.blit(orb, orb.get_rect(center=(WIDTH - 560, 150)))   # clear of the hearts and threat panels
+        wxk = getattr(self, 'wx_kind', 'clear')
+        stormy = wxk in ('storm', 'rain')
+        for c in self.clouds:
+          gs.blit(UIX.sky_cloud(c[2], night, stormy, 'sandstorm' if wxk == 'sand' else wk), (int(c[0]), int(c[1])))
+      else:
+        if night:
+          gs.blit(MOON, (WIDTH - 240, -10))
+        else:
+          gs.blit(DAY['sun'], (WIDTH - 240, -10))
+        for c in self.clouds:
+          gs.blit(CLOUDS[c[2] % len(CLOUDS)], (int(c[0]), int(c[1])))
+      UIX.level_layers(gs, wk, self.far_x, self.mid_x, night)
+      for m in self.mist:
+        gs.blit(MIST, (int(m[0]), int(m[1])))
+      return
     if self.day:
       gs.blit(DAY['sky'], (0, 0))
       gs.blit(DAY['sun'], (WIDTH - 240, -10))
@@ -256,11 +320,19 @@ class GameDraw:
 
   def draw_backdrop_ground(self):
     self.draw_scenery()
-    game_surface.blit(GROUND, (0, GROUND_Y))
-    self.lift_ground(game_surface)
+    if UIX.art_ok('level'):
+      UIX.level_ground(game_surface, self.world(), getattr(self, 'ground_x', 0.0), not self.day)
+    else:
+      game_surface.blit(GROUND, (0, GROUND_Y))
+      self.lift_ground(game_surface)
 
   def draw_scenery(self):
-    gs = game_surface
+    if not self.day and UIX.art_ok('level'):           # at night the trees, bushes and villagers are darkened too
+      self.draw_scenery_to(UIX.NightProxy(game_surface))
+      return
+    self.draw_scenery_to(game_surface)
+
+  def draw_scenery_to(self, gs):
     for s in self.scenery:
       t, x = s['type'], int(s['x'])
       if t == "fg_hill":
@@ -467,9 +539,9 @@ class GameDraw:
         pygame.draw.line(gs, (255, 244, 190), (cx, cy - r), (cx, cy + r), 1)
     else:
       panel(gs, crest, (12, 12, 20), 225, GOLD_BORDER, 4, 14)
-      img = text(title_font, "Flappy Dragon", (228, 58, 28))
+      img = text(title_font, "Raid the Realm", (228, 58, 28))
       tr = img.get_rect(center=(WIDTH // 2, crest.centery))
-      gs.blit(text(title_font, "Flappy Dragon", (70, 10, 6)), tr.move(4, 4))
+      gs.blit(text(title_font, "Raid the Realm", (70, 10, 6)), tr.move(4, 4))
       gs.blit(img, tr)
 
     rec = pygame.Rect(WIDTH // 2 - 150, 172, 300, 30)
@@ -526,6 +598,9 @@ class GameDraw:
       elif k == "difficulty":
         e = d.get('difficulty', 'easy') == 'easy'
         rows[k] = ("Difficulty", "EASY" if e else "HARD", e, r)
+      elif k == "hand":
+        lefty = d.get('lefty', False)
+        rows[k] = ("Controls", "LEFT HAND" if lefty else "RIGHT HAND", not lefty, r)
       else:
         on = d.get(k, True)
         rows[k] = ({"weather": "Weather", "shake": "Camera Shake", "vibrate": "Vibration"}[k], "ON" if on else "OFF", on, r)
@@ -534,6 +609,12 @@ class GameDraw:
       UIX.art_title(gs, "OPTIONS", 50, self.anim)
       if self.opt_from != "PAUSED":
         UIX.art_footer(gs, "Easy: 3 hearts   |   Hard: one hit and you fall")
+        for k_, lab_ in (('backup', "BACKUP SAVE"), ('restore', "RESTORE SAVE")):
+          br = SAVE_BTNS[k_]
+          if UIX.art_ok('info'):
+            UIX.red_button(gs, br, lab_, br.collidepoint(self.mouse))
+          else:
+            draw_button(gs, br, lab_, PARCHMENT, br.collidepoint(self.mouse), font=small_font)
     else:
       UIX.draw_study(gs, self, self.anim, rows, OPT_SLIDERS, slider_track)
       UIX.draw_study_title(gs, "OPTIONS", 46, self.anim)
@@ -563,20 +644,159 @@ class GameDraw:
     gs = game_surface
     if UIX.art_ok('lair'):                              # your painted cave
       UIX.draw_art_den(gs, self, self.anim)
-      UIX.art_stone_title(gs, "THE LAIR", 56, self.anim)
+      UIX.art_stone_title(gs, "THE DRAGONS LAIR", 56, self.anim)
     else:
       UIX.draw_den(gs, self, self.anim)
-      UIX.draw_title(gs, "THE LAIR", 50, self.anim)
+      UIX.draw_title(gs, "THE DRAGONS LAIR", 50, self.anim)
     self.draw_coin_panel()
 
+  def world(self):
+    w = self.data.get('world', 'kingdom')
+    return w if UIX.world_ok(w) else 'kingdom'
+
   def draw_worlds(self):
+    """pick which world to fly in"""
     gs = game_surface
-    self.draw_backdrop_ground()
-    UIX.draw_title(gs, "WORLDS", 52, self.anim)
-    pnl = pygame.Rect(WIDTH // 2 - 220, 150, 440, 200)
-    panel(gs, pnl, PANEL_DARK, 225, STONE_LIGHT, 4, 12)
-    blit_text(gs, button_font, "Coming soon...", PARCHMENT, pnl.center, "center")
-    draw_button(gs, BACK_BTN, "RETURN", PARCHMENT, BACK_BTN.collidepoint(self.mouse))
+    t = self.anim
+    if UIX.art_ok('menu'):
+      UIX.draw_live_menu_bg(gs, t)
+    else:
+      self.draw_backdrop_ground()
+    UIX.art_wide_title(gs, "CHOOSE YOUR REALM", 54, t, 40, 400) if UIX.art_ok('lair') else UIX.draw_title(gs, "CHOOSE YOUR REALM", 52, t)
+    self.draw_coin_panel()
+    cur = self.world()
+    for key, title, r in self.world_rects():
+      hov = r.collidepoint(self.mouse)
+      sel = key == cur
+      if sel:
+        add_glow(gs, r.centerx, r.centery, r.w // 2 + 20, (90, 64, 10))
+      pygame.draw.rect(gs, (20, 12, 6), r.inflate(14, 14), border_radius=10)
+      gs.blit(UIX.world_card(key, r.w, r.h), r.topleft)
+      pygame.draw.rect(gs, BANNER_GOLD if (sel or hov) else GOLD_BORDER, r.inflate(14, 14), 5 if sel else 3, border_radius=10)
+      pl = pygame.Rect(r.x + 20, r.bottom - 22, r.w - 40, 44)
+      if UIX.art_ok('info'):
+        UIX.red_button(gs, pl, title.upper() + ("  - FLYING" if sel else ""), hov)
+      else:
+        draw_button(gs, pl, title, PARCHMENT, hov, font=small_font)
+    # (the tab bar along the bottom replaces the old RETURN button here)
+
+  def draw_modes(self):
+    """the Play screen: choose Adventure, Endless, Obstacle Course or Tutorial"""
+    gs = game_surface
+    t = self.anim
+    if UIX.art_ok('menu'):
+      UIX.draw_live_menu_bg(gs, t)
+    else:
+      self.draw_backdrop_ground()
+    UIX.art_wide_title(gs, "CHOOSE A MODE", 54, t, 40, 470) if UIX.art_ok('lair') else UIX.draw_title(gs, "CHOOSE A MODE", 52, t)
+    self.draw_coin_panel()
+    d = self.data
+    for (key, title, desc, rk), r in MODE.mode_rects(WIDTH):
+      hov = r.collidepoint(self.mouse)
+      panel(gs, r, (36, 24, 20) if not hov else (60, 36, 24), 236, BANNER_GOLD if hov else GOLD_BORDER, 3, 12)
+      add_glow(gs, r.centerx, r.top + 34, 90, (50, 30, 10) if hov else (24, 14, 6))
+      blit_text(gs, button_font, title, BANNER_GOLD, (r.centerx, r.top + 30), "center")
+      words, lines, cur = desc.split(), [], ''
+      for w_ in words:                                 # wrap the description to the card
+        test = (cur + ' ' + w_).strip()
+        if tiny_font.size(test)[0] > r.w - 36 and cur:
+          lines.append(cur)
+          cur = w_
+        else:
+          cur = test
+      lines.append(cur)
+      for i, ln in enumerate(lines[:2]):
+        blit_text(gs, tiny_font, ln, PARCHMENT, (r.centerx, r.top + 60 + i * 20), "center", shadow=False)
+      if rk:
+        best = d.get(rk, 0)
+        lab = ("Best: %d pillars" % best) if key == 'obstacle' else ("Best: %d" % best)
+      else:
+        lab = "Completed!" if d.get('adv_tutorial_done') else "Reward: %d gold" % MODE.TUT_REWARD
+      blit_text(gs, tiny_font, lab, (230, 200, 140), (r.centerx, r.bottom - 22), "center", shadow=False)
+    if UIX.art_ok('info'):
+      UIX.red_button(gs, BACK_BTN, "RETURN", BACK_BTN.collidepoint(self.mouse))
+    else:
+      draw_button(gs, BACK_BTN, "RETURN", PARCHMENT, BACK_BTN.collidepoint(self.mouse))
+
+  def world_rects(self):
+    ws = UIX.worlds_available()
+    n = max(1, len(ws))
+    cols = min(4, n)                                  # up to 4 a row, 2 rows: room for all 7 worlds above RETURN
+    rows = (n + cols - 1) // cols
+    gap = 30
+    w = min(340, (WIDTH - 80 - (cols - 1) * gap) // cols)
+    h = w // 2 if rows == 1 else w * 9 // 20
+    top = 150 if rows == 1 else 122
+    x0 = WIDTH // 2 - (cols * w + (cols - 1) * gap) // 2
+    out = []
+    for i, (key, title, *_r) in enumerate(ws):
+      row, col = divmod(i, cols)
+      in_row = min(cols, n - row * cols)              # centre a short last row
+      xr = WIDTH // 2 - (in_row * w + (in_row - 1) * gap) // 2
+      out.append((key, title, pygame.Rect(xr + col * (w + gap), top + row * (h + 40), w, h)))
+    return out
+
+  def draw_gale(self, gs, d):
+    """wind streaks and swirls racing out in front of the Wind dragon, over the area its gust blasts"""
+    t = pygame.time.get_ticks()
+    x0, y0, w, h = d.right, d.y - 40, 300, 110
+    rnd = random.Random(7)
+    for k in range(22):
+      sp = rnd.uniform(0.7, 1.3)
+      u = ((t * 0.0016 * sp) + rnd.random()) % 1.0           # each streak races from the mouth to the far edge
+      y = y0 + rnd.uniform(0, h) + math.sin(t * 0.008 + k) * 6
+      x = x0 + u * w
+      ln = int(26 + 40 * sp)
+      a = int(220 * math.sin(u * math.pi))
+      c = (min(255, 200 + a // 5), min(255, 214 + a // 6), 230)
+      wid = 3 if k % 4 == 0 else 2 if k % 2 else 1
+      pygame.draw.line(gs, c, (int(x), int(y)), (int(x - ln), int(y + 2)), wid)
+    for k in range(3):                                        # curling gust swirls
+      u = ((t * 0.0011) + k / 3.0) % 1.0
+      cx, cy = int(x0 + 40 + u * (w - 60)), int(y0 + h * (0.3 + 0.2 * k))
+      rr = int(10 + 16 * u)
+      pygame.draw.arc(gs, (235, 245, 255), (cx - rr, cy - rr, rr * 2, rr * 2), t * 0.01 + k, t * 0.01 + k + 4.2, 2)
+    add_glow(gs, x0 + w // 2, y0 + h // 2, 90, (26, 30, 38))
+
+  def draw_phased(self, gs, d):
+    """the Wraith Wyrm gone ethereal: see-through, cold blue, rippling, with fading afterimages"""
+    p = self.phase_a
+    tmp = getattr(self, '_phase_tmp', None)
+    if tmp is None:
+      tmp = self._phase_tmp = pygame.Surface((168, 128), pygame.SRCALPHA)
+    tmp.fill((0, 0, 0, 0))
+    draw_any_dragon(tmp, "WRAITH", PX.OX, PX.OY, int(self.vel * 0.8), self.flap_ph, self.breath, getattr(self, 'flap_left', 0.0) > 0)
+    v = int(90 * p)
+    tmp.fill((0, v // 2, v), special_flags=pygame.BLEND_RGB_ADD)          # spirit-blue
+    t = pygame.time.get_ticks() / 1000.0
+    ox, oy = d.x - PX.OX, d.y - PX.OY
+    for k, (dx, a) in enumerate(((-26, 50), (-13, 80))):                 # afterimages trailing behind
+      ghost = tmp.copy()
+      ghost.set_alpha(int(a * p))
+      gs.blit(ghost, (ox + int(dx * p), oy + int(math.sin(t * 6 + k) * 3 * p)))
+    alpha = int(255 - p * (140 + 25 * math.sin(t * 9)))                 # shimmers as it fades in and out of the world
+    amp = 4.0 * p
+    for y in range(0, 128, 4):                                          # the body ripples like a heat haze
+      strip = tmp.subsurface((0, y, 168, 4)).copy()
+      strip.set_alpha(alpha)
+      gs.blit(strip, (ox + int(math.sin(t * 11 + y * 0.18) * amp), oy + y))
+    add_glow(gs, d.centerx, d.centery, int(46 + 10 * p), (int(20 * p), int(60 * p), int(80 * p)))
+
+  def draw_achieve(self):
+    gs = game_surface
+    if UIX.art_ok('quests'):
+      gs.blit(UIX._cover_surf('quest_bg'), (0, 0))
+    else:
+      self.draw_backdrop_ground()
+    dim(gs, 150)
+    UIX.art_wide_title(gs, "ACHIEVEMENTS", 46, self.anim, 40, 420) if UIX.art_ok('lair') else UIX.draw_title(gs, "ACHIEVEMENTS", 46, self.anim)
+    self.draw_coin_panel()
+    ACH.draw(gs, self, (small_font, tiny_font), (PANEL_DARK, GOLD_BORDER, PARCHMENT, BANNER_GOLD), WIDTH)
+    for r, lab in zip(ACH.nav_rects(WIDTH), ("< PREV", "BACK", "NEXT >")):
+      if UIX.art_ok('info'):
+        UIX.red_button(gs, r, lab, r.collidepoint(self.mouse))
+      else:
+        draw_button(gs, r, lab, PARCHMENT, r.collidepoint(self.mouse), font=small_font)
 
   def draw_quests(self):
     """a tavern notice board: the current bounty is a pinned poster with a wax seal, the next one is tucked behind"""
@@ -585,9 +805,19 @@ class GameDraw:
       UIX.draw_art_quests(gs, self, self.anim)
       UIX.art_wide_title(gs, "REALM QUESTS", 58, self.anim, 40, 420)
       self.draw_coin_panel()
+      self.draw_ach_button(gs)
       return
     UIX.draw_notice_board(gs, self, self.anim)
     UIX.draw_title(gs, "REALM QUESTS", 46, self.anim)
+    self.draw_ach_button(gs)
+
+  def draw_ach_button(self, gs):
+    n = len(self.data.get('achieved', []))
+    lab = "ACHIEVEMENTS %d/%d" % (n, len(ACH.ACHIEVEMENTS))
+    if UIX.art_ok('stables'):
+      UIX.art_wood_button(gs, ACH_BTN, lab, ACH_BTN.collidepoint(self.mouse))
+    else:
+      draw_button(gs, ACH_BTN, lab, BANNER_GOLD, ACH_BTN.collidepoint(self.mouse), font=small_font)
 
   def draw_upgrade_icon(self, key, cx, cy):
     gs = game_surface
@@ -654,14 +884,14 @@ class GameDraw:
     boxes = RARE_BOXES if rare else SELECT_BOXES
     if UIX.art_ok('stables'):                           # your painted barn
       hovered = UIX.draw_art_stables(gs, self, boxes, rare, lambda k: DRAGON_PALETTES[k], self.anim)
-      UIX.art_wide_title(gs, "MYTHICAL CREATURES" if rare else "DRAGON ROSTER", 54, self.anim, 40, 420)
+      UIX.art_wide_title(gs, "MYTHICAL CREATURES" if rare else "DRAGONS ROOST", 54, self.anim, 40, 420)
       self.draw_coin_panel()
       UIX.art_desc_plate(gs, pygame.Rect(WIDTH // 2 - 346, 464, 500, 46), DRAGON_PALETTES[hovered]['desc'])
-      UIX.art_wood_button(gs, RARE_BTN, "ROSTER" if rare else "MYTHICAL", RARE_BTN.collidepoint(self.mouse))
+      UIX.art_wood_button(gs, RARE_BTN, "ROOST" if rare else "MYTHICAL", RARE_BTN.collidepoint(self.mouse))
       self.draw_pending()
       return
     gs.blit(UIX.stable_backdrop(), (0, 0))                # the stables: each dragon in its own stall
-    UIX.draw_title(gs, "MYTHICAL CREATURES" if rare else "DRAGON ROSTER", 50, self.anim)
+    UIX.draw_title(gs, "MYTHICAL CREATURES" if rare else "DRAGONS ROOST", 50, self.anim)
     self.draw_coin_panel()
     hovered = self.selected if self.selected in [b[0] for b in boxes] else boxes[0][0]
     for key, rect in boxes:
@@ -688,7 +918,7 @@ class GameDraw:
     pr = pygame.Rect(WIDTH // 2 - 330, HEIGHT - 116, 560, 50)
     gs.blit(UIX.plaque(pr.w, pr.h, tuple(UIX._wrap(UIX._ink_font(14), DRAGON_PALETTES[hovered]['desc'], pr.w - 30)[:2]), ((50, 24, 6), (50, 24, 6))), pr.topleft)
     pass  # (the tab bar replaces this RETURN button)
-    draw_button(gs, RARE_BTN, "ROSTER" if rare else "MYTHICAL", BANNER_GOLD, RARE_BTN.collidepoint(self.mouse), (60, 20, 20), BANNER_GOLD, small_font)
+    draw_button(gs, RARE_BTN, "ROOST" if rare else "MYTHICAL", BANNER_GOLD, RARE_BTN.collidepoint(self.mouse), (60, 20, 20), BANNER_GOLD, small_font)
     self.draw_pending()
 
   def draw_pending(self):
@@ -763,14 +993,14 @@ class GameDraw:
     unlocked = key in self.data['unlocked']
     self.info_backdrop()
     rare = self.info_from == "RARE_SELECT"
-    blit_text(gs, small_font, "MYTHICAL CREATURES" if rare else "DRAGON ROSTER", (236, 222, 196), (24, 22), "midleft")
+    blit_text(gs, small_font, "MYTHICAL CREATURES" if rare else "DRAGONS ROOST", (236, 222, 196), (24, 22), "midleft")
     self.info_title(pal['title'].upper())
     pr = INFO_PORTRAIT
     self.info_panel(gs, pr, PANEL_DARK, 225, GOLD_BORDER, 4, 12)
     add_glow(gs, pr.centerx, pr.centery + 10, 150, BREATH_GLOW.get(key, (60, 40, 20)))
     self.info_floor(gs, pr)
     t = self.anim
-    fire = (t % 5.0) > 3.4                                  # breathes every few seconds
+    fire = False                                            # (details page: only the idle flying loop)
     fi = PX.frame_index(t * 7)
     sc = 2.0
     spr = self.info_sprite(key, fi, fire, sc)
@@ -791,8 +1021,34 @@ class GameDraw:
     gs.set_clip(None)
     if not unlocked:
       dim(gs, 90, pr.inflate(-8, -8))
+    else:                                                  # level badge and XP bar along the top of the picture
+      lv_, xp_ = self.dragon_lv(key)
+      blit_text(gs, small_font, "LEVEL %d" % lv_, BANNER_GOLD, (pr.left + 22, pr.top + 26), "midleft")
+      bar = pygame.Rect(pr.left + 22 + small_font.size("LEVEL 10")[0] + 12, pr.top + 21, 150, 10)
+      pygame.draw.rect(gs, (40, 26, 18), bar, border_radius=5)
+      cap_ = self.dragon_cap()
+      f = 1.0 if lv_ >= cap_ else min(1.0, xp_ / float(dragon_need(lv_)))
+      if f > 0:
+        pygame.draw.rect(gs, (230, 170, 40), (bar.x, bar.y, max(5, int(bar.w * f)), bar.h), border_radius=5)
+      pygame.draw.rect(gs, GOLD_BORDER, bar, 1, border_radius=5)
+      txt = ("MAX (cap %d)" % cap_) if lv_ >= cap_ else "%d / %d XP   (cap %d)" % (xp_, dragon_need(lv_), cap_)
+      blit_text(gs, tiny_font, txt, (236, 222, 196), (bar.right + 8, bar.centery), "midleft")
+      gn = GATK.ground_name(key)
+      if gn:                                               # its ground attack, and when it unlocks
+        ok_ = lv_ >= GROUND_LEVEL
+        gt = ("GROUND ATTACK: %s" % gn) if ok_ else ("GROUND ATTACK at Lv %d: %s" % (GROUND_LEVEL, gn))
+        blit_text(gs, tiny_font, gt, (140, 230, 120) if ok_ else (220, 190, 140), (pr.centerx, pr.bottom - 22), "center")
     ip = INFO_PANEL
     self.info_panel(gs, ip, PANEL_DARK, 225, STONE_LIGHT, 3, 12)
+    if getattr(self, 'info_page', 'stats') == 'levels':
+      self.draw_level_page(gs, ip, key)
+      self.info_button(gs, INFO_BACK, "BACK TO ROSTER", PARCHMENT, INFO_BACK.collidepoint(self.mouse), font=small_font)
+      self.info_button(gs, INFO_LEVELS, "STATS", PARCHMENT, INFO_LEVELS.collidepoint(self.mouse), font=small_font)
+      lab = ("SELECTED" if self.selected == key else "SELECT DRAGON") if unlocked else "UNLOCK  %d" % pal['cost']
+      self.info_button(gs, INFO_SELECT, lab, BANNER_GOLD, INFO_SELECT.collidepoint(self.mouse), font=small_font)
+      self.draw_coin_panel()
+      self.draw_pending()
+      return
     words, lines, cur = pal['desc'].split(), [], ''
     for w in words:
       test = (cur + ' ' + w).strip()
@@ -815,6 +1071,9 @@ class GameDraw:
     self.info_rule(gs, ip, y1)
     secs = ((380 if key == "RED" else 240) + self.data['upgrades']['deep_lungs'] * 60) / float(FPS)
     blit_text(gs, tiny_font, "BREATH:  %s, %.1f s" % (breath, secs), PARCHMENT, (ip.left + 18, y1 + 18), "midleft", shadow=False)
+    lv_, xp_ = self.dragon_lv(key)
+    if key in ("RED", "GREEN", "ALIEN", "SILVER") and lv_ < GROUND_LEVEL:
+      special = "%s (Lv %d)" % (special, GROUND_LEVEL)
     blit_text(gs, tiny_font, "SPECIAL:  %s" % special, PARCHMENT, (ip.left + 18, y1 + 40), "midleft", shadow=False)
     if unlocked:
       st_txt, st_col = ("SELECTED", BANNER_GOLD) if self.selected == key else ("OWNED", (110, 220, 110))
@@ -823,6 +1082,7 @@ class GameDraw:
     blit_text(gs, tiny_font, "STATUS:", PARCHMENT, (ip.left + 18, y1 + 62), "midleft", shadow=False)
     blit_text(gs, tiny_font, st_txt, st_col, (ip.left + 26 + tiny_font.size("STATUS:")[0], y1 + 62), "midleft", shadow=False)
     self.info_button(gs, INFO_BACK, "BACK TO ROSTER", PARCHMENT, INFO_BACK.collidepoint(self.mouse), font=small_font)
+    self.info_button(gs, INFO_LEVELS, "LEVEL REWARDS", PARCHMENT, INFO_LEVELS.collidepoint(self.mouse), font=small_font)
     if unlocked:
       lab = "SELECTED" if self.selected == key else "SELECT DRAGON"
     else:
@@ -831,10 +1091,51 @@ class GameDraw:
     self.draw_coin_panel()
     self.draw_pending()
 
+  def draw_level_page(self, gs, ip, key):
+    """dragon details, second page: what each level gives and how to earn XP"""
+    lv_, xp_ = self.dragon_lv(key)
+    cap_ = self.dragon_cap()
+    blit_text(gs, small_font, "LEVEL REWARDS", BANNER_GOLD, (ip.centerx, ip.top + 22), "center", shadow=False)
+    gn = GATK.ground_name(key) or "-"
+    pk_ = PERK.PERK.get(key)
+    rows = ((GROUND_LEVEL, "Ground attack", gn),
+            (PERK.LV_SPECIAL, "Stronger special", "Breath lasts 25% longer, hits bosses 25% harder"),
+            (PERK.LV_PERK, "Passive skill", PERK.PERK_TEXT.get(pk_, "-")),
+            (PERK.LV_ULT, "Ultimate: " + PERK.ULT_NAME.get(key, ""), "Defeat %d foes, then tap ULT to clear the screen" % PERK.ULT_NEED))
+    y = ip.top + 46
+    for lvn, head, txt_ in rows:
+      ok_ = lv_ >= lvn
+      col = (140, 230, 120) if ok_ else (220, 190, 140)
+      badge = pygame.Rect(ip.left + 14, y, 54, 40)
+      pygame.draw.rect(gs, (50, 70, 40) if ok_ else (60, 44, 30), badge, border_radius=8)
+      pygame.draw.rect(gs, col, badge, 2, border_radius=8)
+      blit_text(gs, tiny_font, "Lv %d" % lvn, col, badge.center, "center", shadow=False)
+      im_ = text(small_font, head + ("  (unlocked)" if ok_ else ""), col)
+      if im_.get_width() > ip.w - 96:
+        im_ = pygame.transform.smoothscale(im_, (ip.w - 96, max(1, int(im_.get_height() * (ip.w - 96) / float(im_.get_width())))))
+      gs.blit(im_, (badge.right + 10, y - 2))
+      im_ = text(tiny_font, txt_, PARCHMENT)
+      if im_.get_width() > ip.w - 96:
+        im_ = pygame.transform.smoothscale(im_, (ip.w - 96, max(1, int(im_.get_height() * (ip.w - 96) / float(im_.get_width())))))
+      gs.blit(im_, (badge.right + 10, y + 21))
+      y += 47
+    self.info_rule(gs, ip, y + 2)
+    for i, ln in enumerate(("Earn XP every run: score and bosses beaten.",
+                            "Your baby companion shares 35% (70% if it matches).",
+                            "Level cap %d now: every Adult baby raises it by 1." % cap_)):
+      im_ = text(tiny_font, ln, (210, 196, 170))
+      if im_.get_width() > ip.w - 30:
+        im_ = pygame.transform.smoothscale(im_, (ip.w - 30, max(1, int(im_.get_height() * (ip.w - 30) / float(im_.get_width())))))
+      gs.blit(im_, (ip.left + 16, y + 8 + i * 17))
+
   def bestiary_frames(self, key):
-    """Idle / movement frames for one bestiary entry (no attack animations)."""
+    """Flying / walking frames for one bestiary entry (never attacks)."""
     if key == 'archer':
-      return [anim_frame('satyr', 'IDLE', i) for i in range(anim_count('satyr', 'IDLE'))]
+      return [anim_frame('satyr', 'WALK', i) for i in range(anim_count('satyr', 'WALK'))]
+    if key == 'catapult':                              # your catapult art
+      return [NF.nf_frame('catapult2', 'crank', i, 1.0)[0] for i in range(NF.nf_count('catapult2', 'crank'))]
+    if key in ('trebuchet', 'ballista'):                # your art, at rest
+      return [NF.nf_frame(key + '2', 'attack', 0, 1.0)[0]]
     if key in ('catapult', 'trebuchet'):
       kind = 'cat' if key == 'catapult' else 'treb'
       fake = {'fired': False, 'swing': 0, 'timer': 60 if kind == 'cat' else 45}
@@ -846,21 +1147,25 @@ class GameDraw:
     if key == 'ballista':
       return [cached_sprite(("ballista", 'aiming'), 100, 110, 30, 40, lambda s, x, y: draw_ballista(s, x, y, 'aiming'))[0]]
     if key in ('pyro', 'wiz', 'skel'):
-      return [anim_frame(key, 'IDLE', i) for i in range(anim_count(key, 'IDLE'))]
+      return [anim_frame(key, 'WALK', i) for i in range(anim_count(key, 'WALK'))]
     if key == 'golem':
       return [extra_frame('golem', i) for i in range(12)]
     if key in ('harpy', 'garg', 'eye'):
       return [anim_frame(key, 'MOVE', i) for i in range(anim_count(key, 'MOVE'))]
     if key == 'imp':
-      return [anim_frame('imp', 'IDLE', i) for i in range(anim_count('imp', 'IDLE'))]
+      return [anim_frame('imp', 'MOVE', i) for i in range(anim_count('imp', 'MOVE'))]
     if key == 'spider':
-      return [ws_frame('s_walk', i) for i in range(ws_count('s_walk'))]
+      return [sp_frame('walk', i, 1.0)[0] for i in range(sp_count('walk'))]
     if key == 'cyclops':
-      return [cyc_frame('idle', i) for i in range(cyc_count('idle'))]
+      return [cyc_frame('walk', i) for i in range(cyc_count('walk'))]
     if key == 'witch':
-      return [ws_frame('w_idle', i) for i in range(ws_count('w_idle'))]
+      return [ws_frame('w_move', i) for i in range(ws_count('w_move'))]
     if key in ('moth', 'bat'):
       return [night_frame(key, 'fly', i, 2)[0] for i in range(night_count(key, 'fly'))]
+    if key in NF.FOE:                                  # the new foes and bosses: their flying loops
+      return [NF.nf_frame(NF.ART.get(key, key), 'fly', i, 1.0)[0] for i in range(NF.nf_count(NF.ART.get(key, key), 'fly'))]
+    if key in ('sphinx', 'manticore', 'mothman'):
+      return [NF.nf_frame(key, 'fly', i, 1.0)[0] for i in range(NF.nf_count(key, 'fly'))]
     if key == 'griffin':
       return list(griffin_frames())
     if key == 'phoenix':
@@ -875,7 +1180,7 @@ class GameDraw:
       return beh_frames()
     return [extra_frame('imp', 0)]
 
-  BESTIARY_FPS = {'beholder': 9, 'hydra': 9, 'jabber': 9, 'moth': 8, 'bat': 12, 'griffin': 6, 'golem': 8, 'cyclops': 8, 'witch': 8, 'demon': 9, 'phoenix': 10}
+  BESTIARY_FPS = {'banshee': 8, 'vulture': 10, 'scarab': 10, 'snake': 10, 'djinn': 9, 'wyrm': 10, 'sphinx': 9, 'manticore': 9, 'mothman': 9, 'beholder': 9, 'hydra': 9, 'jabber': 9, 'moth': 8, 'bat': 12, 'griffin': 6, 'golem': 8, 'cyclops': 8, 'witch': 8, 'demon': 9, 'phoenix': 10}
 
   def fit_art(self, key, t, bw, bh, cap=4.0):
     """Bestiary picture: every frame cropped to the creature's real outline and scaled by one
@@ -1090,7 +1395,7 @@ class GameDraw:
       else:
         tt = UIX._fit_text("EMPTY", pl.w - 16, 16, ink)
         gs.blit(tt, tt.get_rect(center=(pl.centerx, pl.top + 17)))
-        tt = UIX._fit_text("place an egg from the Hatchery", pl.w - 16, 11, (90, 50, 20))
+        tt = UIX._fit_text("add an egg", pl.w - 16, 12, (90, 50, 20))
         gs.blit(tt, tt.get_rect(center=(pl.centerx, pl.top + 38)))
     UIX.art_wood_button(gs, EGG_ROOST_BTN, "EGGS", EGG_ROOST_BTN.collidepoint(self.mouse))
 
@@ -1159,56 +1464,19 @@ class GameDraw:
     if UIX.art_ok('babies'):
       return self.draw_art_hatchlings()
     self.draw_backdrop_ground()
-    UIX.draw_title(gs, "HATCHLINGS", 44, self.anim)
+    UIX.draw_title(gs, "THE NURSERY", 44, self.anim)
     babies = self.data.get('babies', [])
     for bb in babies:
       self.pet_defaults(bb)
     comp = self.find_pet(self.data.get('companion'))
-    blit_text(gs, tiny_font, "%d hatchling%s  -  companion: %s" % (len(babies), "" if len(babies) == 1 else "s", comp['name'] if comp else "none"), (180, 170, 150), (24, 22), "midleft", shadow=False)
+    blit_text(gs, tiny_font, "%d whelp%s" % (len(babies), "" if len(babies) == 1 else "s"), (180, 170, 150), (24, 20), "midleft", shadow=False)
+    blit_text(gs, tiny_font, "With you: %s" % (comp['name'] if comp else "none"), (180, 170, 150), (24, 42), "midleft", shadow=False)
     t = self.anim
     if not babies:
       pnl = pygame.Rect(WIDTH // 2 - 250, 180, 500, 150)
       panel(gs, pnl, PANEL_DARK, 225, STONE_LIGHT, 3, 12)
-      blit_text(gs, small_font, "No hatchlings yet!", PARCHMENT, (pnl.centerx, pnl.top + 44), "center")
+      blit_text(gs, small_font, "No whelps yet!", PARCHMENT, (pnl.centerx, pnl.top + 44), "center")
       blit_text(gs, tiny_font, "Place a dragon egg in a roost and wait for it to hatch.", (200, 190, 170), (pnl.centerx, pnl.top + 90), "center", shadow=False)
-    elif self.hb_view == 'den':
-      r = DEN_RECT
-      panel(gs, r, (24, 16, 14), 235, (120, 80, 40), 4, 14)
-      for k in range(5):                                       # warm cave light + hanging moss
-        add_glow(gs, r.left + 80 + k * 150, r.top + 40, 70, (40, 26, 10))
-      pygame.draw.ellipse(gs, (54, 36, 22), (r.left + 20, r.bottom - 70, r.w - 40, 60))
-      back, front = nest_sprites(3)
-      gs.blit(back, (r.centerx - back.get_width() // 2, r.bottom - 96 - NEST_RAISE * 3))
-      gs.blit(front, (r.centerx - front.get_width() // 2, r.bottom - 96 - NEST_RAISE * 3))
-      for k in range(14):                                      # straw on the floor
-        x = r.left + 30 + (k * 53) % (r.w - 60)
-        pygame.draw.line(gs, (150, 110, 50), (x, r.bottom - 24 - k % 3 * 6), (x + 10, r.bottom - 28 - k % 3 * 6), 2)
-      gs.set_clip(r.inflate(-8, -8))
-      for i, bb in enumerate(babies[:14]):
-        dv = self.den.get(bb.get('id', i))
-        if not dv:
-          continue
-        react = dv[4] > 0
-        anim = 'attack' if react else ('move' if abs(dv[2]) > 0.3 else 'idle')
-        spr = self.pet_sprite(bb, anim, int(t * 7 + dv[5] * 3), 0.9, flip=dv[2] > 0)
-        x, y = int(dv[0]), int(dv[1] + math.sin(t * 3 + dv[5]) * 4)
-        if bb.get('id') == self.den_sel:
-          pygame.draw.ellipse(gs, (255, 220, 120), (x - 30, y + spr.get_height() // 2 - 8, 60, 12), 2)
-        gs.blit(spr, (x - spr.get_width() // 2, y - spr.get_height() // 2))
-        if react:
-          self.draw_hearts_fx(gs, x, y - 30, 45 - dv[4])
-        blit_text(gs, tiny_font, bb['name'], PARCHMENT, (x, y + spr.get_height() // 2 + 6), "center")
-      gs.set_clip(None)
-      if len(babies) > 14:
-        blit_text(gs, tiny_font, "+%d more in the list" % (len(babies) - 14), (200, 190, 170), (r.right - 90, r.top + 16), "center", shadow=False)
-      sel = self.find_pet(self.den_sel)
-      if sel:
-        strip = pygame.Rect(r.left + 20, 426, r.w - 40, 52)
-        panel(gs, strip, PANEL_DARK, 235, RARITY_COL[sel['r']], 3, 10)
-        blit_text(gs, small_font, "%s  -  Lv %d %s" % (sel['name'], sel['level'], self.pet_stage(sel['level'])), PARCHMENT, (strip.left + 16, strip.centery), "midleft", shadow=False)
-        draw_button(gs, HB_DETAIL_BTN, "DETAILS", BANNER_GOLD, HB_DETAIL_BTN.collidepoint(self.mouse), font=small_font)
-      else:
-        blit_text(gs, tiny_font, "Tap a hatchling to play with it", (200, 190, 170), (WIDTH // 2, r.bottom - 12), "center", shadow=False)
     else:
       g = EGG_GRID
       cw, ch, gap, pitch = EGG_CARD
@@ -1226,8 +1494,7 @@ class GameDraw:
         blit_text(gs, small_font, bb['name'], PARCHMENT, (r.centerx, r.bottom - 38), "center")
         blit_text(gs, tiny_font, "Lv %d %s" % (bb['level'], DRAGON_PALETTES[bb['type']]['title'].split()[0]), RARITY_COL[rar], (r.centerx, r.bottom - 16), "center", shadow=False)
       gs.set_clip(None)
-    pass  # (the tab bar replaces this RETURN button)
-    draw_button(gs, HB_VIEW_BTN, "LIST VIEW" if self.hb_view == 'den' else "DEN VIEW", BANNER_GOLD, HB_VIEW_BTN.collidepoint(self.mouse), font=small_font)
+    self.draw_hb_scrollbar(gs)
 
   def draw_art_hatchlings(self):
     """the hatchlings' treasure hall from your painted background"""
@@ -1235,52 +1502,18 @@ class GameDraw:
     t = self.anim
     gs.blit(UIX._cover_surf('baby_bg'), (0, 0))
     UIX.art_lights(gs, 'baby_bg', UIX.YA.LIGHTS, t)
-    UIX.art_wide_title(gs, "HATCHLINGS", 54, t, 40, 400)
+    UIX.art_wide_title(gs, "THE NURSERY", 54, t, 40, 400)
     self.draw_coin_panel()
     babies = self.data.get('babies', [])
     for bb in babies:
       self.pet_defaults(bb)
     comp = self.find_pet(self.data.get('companion'))
-    info = UIX._outlined(UIX._ink_font(15), "%d hatchling%s  -  companion: %s" % (len(babies), "" if len(babies) == 1 else "s", comp['name'] if comp else "none"), (250, 236, 200))
-    gs.blit(info, (20, 18))
+    info = UIX._outlined(UIX._ink_font(15), "%d whelp%s" % (len(babies), "" if len(babies) == 1 else "s"), (250, 236, 200))
+    gs.blit(info, (20, 14))
+    info = UIX._outlined(UIX._ink_font(15), "With you: %s" % (comp['name'] if comp else "none"), (250, 236, 200))
+    gs.blit(info, (20, 38))
     if not babies:
-      UIX.art_desc_plate(gs, pygame.Rect(WIDTH // 2 - 270, 250, 540, 80), "No hatchlings yet! Place a dragon egg on a hatching hearth and wait for it to hatch.")
-    elif self.hb_view == 'den':
-      r = DEN_RECT
-      for i, bb in enumerate(babies[:14]):                       # shadows on the floor first
-        dv = self.den.get(bb.get('id', i))
-        if dv:
-          sh = pygame.Surface((64, 16), pygame.SRCALPHA)
-          pygame.draw.ellipse(sh, (0, 0, 0, 70), (0, 0, 64, 16))
-          gs.blit(sh, (int(dv[0]) - 32, min(r.bottom + 30, int(dv[1]) + 46)))
-      nf = UIX._ink_font(14)
-      for i, bb in enumerate(babies[:14]):
-        dv = self.den.get(bb.get('id', i))
-        if not dv:
-          continue
-        react = dv[4] > 0
-        anim = 'attack' if react else ('move' if abs(dv[2]) > 0.3 else 'idle')
-        spr = self.pet_sprite(bb, anim, int(t * 7 + dv[5] * 3), 0.95, flip=dv[2] > 0)
-        x, y = int(dv[0]), int(dv[1] + math.sin(t * 3 + dv[5]) * 4)
-        if bb.get('id') == self.den_sel:
-          add_glow(gs, x, y, 46, (80, 60, 14))
-          pygame.draw.ellipse(gs, (255, 220, 120), (x - 30, y + spr.get_height() // 2 - 8, 60, 12), 2)
-        gs.blit(spr, (x - spr.get_width() // 2, y - spr.get_height() // 2))
-        if react:
-          self.draw_hearts_fx(gs, x, y - 30, 45 - dv[4])
-        nm = UIX._outlined(nf, bb['name'], (250, 236, 200))
-        gs.blit(nm, nm.get_rect(center=(x, y + spr.get_height() // 2 + 8)))
-      if len(babies) > 14:
-        im = UIX._outlined(UIX._ink_font(13), "+%d more in the list" % (len(babies) - 14), (250, 236, 200))
-        gs.blit(im, im.get_rect(midright=(WIDTH - 24, 82)))
-      sel = self.find_pet(self.den_sel)
-      if sel:
-        strip = pygame.Rect(HB_VIEW_BTN.left - 560, HB_VIEW_BTN.top, 380, HB_VIEW_BTN.h)
-        UIX.art_desc_plate(gs, strip, "%s  -  Lv %d %s" % (sel['name'], sel['level'], self.pet_stage(sel['level'])))
-        UIX.art_wood_button(gs, HB_DETAIL_BTN, "DETAILS", HB_DETAIL_BTN.collidepoint(self.mouse))
-      else:
-        im = UIX._outlined(UIX._ink_font(15), "Tap a hatchling to play with it", (250, 236, 200))
-        gs.blit(im, im.get_rect(midright=(HB_VIEW_BTN.left - 20, HB_VIEW_BTN.centery)))
+      UIX.art_desc_plate(gs, pygame.Rect(WIDTH // 2 - 270, 250, 540, 80), "No whelps yet! Place a dragon egg on a hatching hearth and wait for it to hatch.")
     else:
       g = EGG_GRID
       cw, ch, gap, pitch = EGG_CARD
@@ -1297,10 +1530,35 @@ class GameDraw:
         add_glow(gs, r.centerx, pr.top - 50, 50, self.egg_glow(rar))
         spr = self.pet_sprite(bb, 'idle', int(t * 7 + i), 1.05)
         gs.blit(spr, (r.centerx - spr.get_width() // 2, pr.top - 6 - spr.get_height() + int(math.sin(t * 3 + i) * 3)))
-        t1 = UIX._fit_text("%s  Lv %d" % (bb['name'], bb['level']), pr.w - 16, 15, (60, 28, 6))
+        nm_ = bb['name'][5:] if bb['name'].startswith("Baby ") else bb['name']   # (the card is too small for the full name)
+        t1 = UIX._fit_text(nm_, pr.w - 34, 15, (60, 28, 6))
         gs.blit(t1, t1.get_rect(center=pr.center))
+        lv_ = UIX._outlined(UIX._ink_font(13), "Lv %d" % bb['level'], (255, 230, 150))
+        gs.blit(lv_, lv_.get_rect(topright=(r.right - 14, r.top + 12)))
       gs.set_clip(None)
-    UIX.art_wood_button(gs, HB_VIEW_BTN, "LIST VIEW" if self.hb_view == 'den' else "DEN VIEW", HB_VIEW_BTN.collidepoint(self.mouse))
+    self.draw_hb_scrollbar(gs)
+
+  def hb_max_scroll(self):
+    cw, ch, gap, pitch = EGG_CARD
+    rows = (len(self.data.get('babies', [])) + 3) // 4
+    return max(0, rows * pitch - (pitch - ch) - EGG_GRID.h)
+
+  def draw_hb_scrollbar(self, gs):
+    """a scroll bar down the right of the Nursery grid, once there are more whelps than fit"""
+    ms = self.hb_max_scroll()
+    if ms <= 0:
+      return
+    tr = HB_SCROLL
+    pygame.draw.rect(gs, (40, 26, 16), tr.inflate(6, 6), border_radius=8)
+    pygame.draw.rect(gs, (90, 60, 34), tr, border_radius=6)
+    full = tr.h + ms
+    th = max(44, int(tr.h * tr.h / float(full)))
+    ty = tr.top + int((tr.h - th) * min(1.0, self.hb_scroll / float(ms)))
+    hot = getattr(self, 'hb_bar', False) or tr.inflate(20, 0).collidepoint(self.mouse)
+    pygame.draw.rect(gs, (255, 214, 110) if hot else (226, 172, 60), (tr.x, ty, tr.w, th), border_radius=6)
+    pygame.draw.rect(gs, (120, 74, 20), (tr.x, ty, tr.w, th), 2, border_radius=6)
+    for k in (-6, 0, 6):                                   # grip lines
+      pygame.draw.line(gs, (150, 96, 30), (tr.x + 3, ty + th // 2 + k), (tr.right - 4, ty + th // 2 + k), 1)
 
   def draw_hatch_info(self):
     gs = game_surface
@@ -1310,7 +1568,7 @@ class GameDraw:
     bb = self.pet_defaults(babies[self.hb_idx])
     rar, typ = bb['r'], bb['type']
     self.info_backdrop()
-    blit_text(gs, small_font, "%s HATCHLING" % DRAGON_PALETTES[typ]['title'].split()[0].upper(), (236, 222, 196), (24, 22), "midleft")
+    blit_text(gs, small_font, "%s WHELP" % DRAGON_PALETTES[typ]['title'].split()[0].upper(), (236, 222, 196), (24, 22), "midleft")
     self.info_title(bb['name'].upper())
     pr = INFO_PORTRAIT
     self.info_panel(gs, pr, (30, 20, 16), 230, RARITY_COL[rar], 4, 12)
@@ -1333,26 +1591,26 @@ class GameDraw:
     x0 = ip.left + (30 if UIX.art_ok('info') else 18)
     if UIX.art_ok('info'):
       ip = ip.inflate(-24, -16)
-    blit_text(gs, small_font, "%s  %s" % (EGG_STYLE[rar][0], DRAGON_PALETTES[typ]['title']), RARITY_COL[rar], (x0, ip.top + 24), "midleft", shadow=False)
+    blit_text(gs, small_font, "%s  %s" % (EGG_STYLE[rar][0], DRAGON_PALETTES[typ]['title']), RARITY_COL[rar], (x0, ip.top + 18), "midleft", shadow=False)
     lv = bb['level']
-    blit_text(gs, small_font, "LEVEL %d  -  %s" % (lv, self.pet_stage(lv).upper()), (255, 210, 150), (x0, ip.top + 62), "midleft", shadow=False)
+    blit_text(gs, small_font, "LEVEL %d  -  %s" % (lv, self.pet_stage(lv).upper()), (255, 210, 150), (x0, ip.top + 50), "midleft", shadow=False)
     need = self.pet_need(lv)
-    self.draw_bar(gs, pygame.Rect(x0, ip.top + 80, ip.w - 36, 14), 1.0 if lv >= PET_MAX_LEVEL else bb['xp'] / float(need), (120, 180, 255))
-    blit_text(gs, tiny_font, "MAX LEVEL" if lv >= PET_MAX_LEVEL else "XP %d / %d" % (bb['xp'], need), PARCHMENT, (x0, ip.top + 108), "midleft", shadow=False)
+    self.draw_bar(gs, pygame.Rect(x0, ip.top + 66, ip.w - 36, 12), 1.0 if lv >= PET_MAX_LEVEL else bb['xp'] / float(need), (120, 180, 255))
+    blit_text(gs, tiny_font, "MAX LEVEL" if lv >= PET_MAX_LEVEL else "XP %d / %d" % (bb['xp'], need), PARCHMENT, (x0, ip.top + 90), "midleft", shadow=False)
     hp = self.pet_happy(bb)
-    blit_text(gs, small_font, "HAPPINESS", (255, 210, 150), (x0, ip.top + 140), "midleft", shadow=False)
-    self.draw_bar(gs, pygame.Rect(x0, ip.top + 158, ip.w - 36, 14), hp / 100.0, (110, 220, 110) if hp > 50 else ((240, 190, 60) if hp > 20 else (230, 80, 70)))
+    blit_text(gs, small_font, "HAPPINESS", (255, 210, 150), (x0, ip.top + 118), "midleft", shadow=False)
+    self.draw_bar(gs, pygame.Rect(x0, ip.top + 134, ip.w - 36, 12), hp / 100.0, (110, 220, 110) if hp > 50 else ((240, 190, 60) if hp > 20 else (230, 80, 70)))
     mood = "Overjoyed" if hp > 80 else ("Happy" if hp > 50 else ("Hungry" if hp > 20 else "Very hungry!"))
-    blit_text(gs, tiny_font, "%d%%  -  %s" % (int(hp), mood), PARCHMENT, (x0, ip.top + 186), "midleft", shadow=False)
-    blit_text(gs, small_font, "POWER", (255, 210, 150), (x0, ip.top + 222), "midleft", shadow=False)
+    blit_text(gs, tiny_font, "%d%%  -  %s" % (int(hp), mood), PARCHMENT, (x0, ip.top + 158), "midleft", shadow=False)
+    blit_text(gs, small_font, "POWER", (255, 210, 150), (x0, ip.top + 188), "midleft", shadow=False)
     pw = self.pet_power(bb)
     for s_ in range(5):
-      self.info_star(gs, ip.right - 118 + s_ * 21, ip.top + 222, s_ < max(1, min(5, int(round(pw * 2.2)))))
+      self.info_star(gs, ip.right - 118 + s_ * 21, ip.top + 188, s_ < max(1, min(5, int(round(pw * 2.2)))))
     comp = self.data.get('companion') == bb['id']
-    blit_text(gs, tiny_font, "Flies with you and spits %s at foes" % {'RED': 'lava', 'BLUE': 'frost', 'GREEN': 'acid', 'CHRONO': 'time magic', 'YELLOW': 'sparks', 'SILVER': 'gusts', 'CHINESE': 'water', 'SKELETAL': 'soul fire', 'COSMIC': 'starlight', 'UNICORN': 'rainbows', 'WRAITH': 'ghost fire', 'CLOCKWORK': 'tiny rockets', 'FOREST': 'razor leaves', 'COCKATRICE': 'eggs', 'WHALE': 'stardust', 'FEY': 'fairy dust', 'ALIEN': 'acid', 'EAGLE': 'feathers'}.get(typ, 'fire'), (200, 190, 170), (x0, ip.top + 256), "midleft", shadow=False)
-    blit_text(gs, tiny_font, "Grows with every run as your companion", (200, 190, 170), (x0, ip.top + 278), "midleft", shadow=False)
-    blit_text(gs, tiny_font, "COMPANION" if comp else "Resting in the den", BANNER_GOLD if comp else (170, 160, 150), (x0, ip.top + 312), "midleft", shadow=False)
-    labels = ("BACK", "NEW NAME", "FEED %d" % PET_FEED_COST, "WITH YOU!" if comp else "FLY WITH ME")
+    blit_text(gs, tiny_font, "Flies with you and spits %s at foes" % {'RED': 'lava', 'BLUE': 'frost', 'GREEN': 'acid', 'CHRONO': 'time magic', 'YELLOW': 'sparks', 'SILVER': 'gusts', 'CHINESE': 'water', 'SKELETAL': 'soul fire', 'COSMIC': 'starlight', 'UNICORN': 'rainbows', 'WRAITH': 'ghost fire', 'CLOCKWORK': 'tiny rockets', 'FOREST': 'razor leaves', 'COCKATRICE': 'eggs', 'WHALE': 'stardust', 'FEY': 'fairy dust', 'ALIEN': 'acid', 'EAGLE': 'feathers', 'RAVEN': 'dark feathers', 'PERYTON': 'red feathers'}.get(typ, 'fire'), (200, 190, 170), (x0, ip.top + 216), "midleft", shadow=False)
+    blit_text(gs, tiny_font, "Grows with every run", (200, 190, 170), (x0, ip.top + 236), "midleft", shadow=False)
+    blit_text(gs, tiny_font, "COMPANION" if comp else "Resting in the den", BANNER_GOLD if comp else (170, 160, 150), (x0, ip.top + 262), "midleft", shadow=False)
+    labels = ("BACK", "FEED %d" % PET_FEED_COST, "WITH YOU!" if comp else "FLY WITH ME")
     for r, lab in zip(PET_BTNS, labels):
       self.info_button(gs, r, lab, BANNER_GOLD if lab.startswith(("FEED", "FLY", "WITH")) else PARCHMENT, r.collidepoint(self.mouse), font=small_font)
     self.draw_coin_panel()
@@ -1510,7 +1768,7 @@ class GameDraw:
       gs.blit(im, im.get_rect(center=(WIDTH // 2, 170)))
     else:
       loc = t - 180
-      img = ENV.fire_text("REIGN TERROR", 72)
+      img = ENV.fire_text("DESTROY!", 104)
       if img.get_width() > WIDTH - 40:
         img = pygame.transform.smoothscale(img, (WIDTH - 40, int(img.get_height() * (WIDTH - 40) / float(img.get_width()))))
       sc = 1.0 + 0.6 * max(0.0, 1 - loc / 12.0)
@@ -1521,9 +1779,12 @@ class GameDraw:
   def draw_game(self):
     gs, d, st = game_surface, self.dragon, self.state
     self.draw_scenery()
+    if getattr(self, 'mode', 'adventure') == 'obstacle':   # the pillars of the obstacle course
+      MODE.obstacle_draw(gs, self, self.world(), GROUND_Y)
     self.draw_particles()
 
     self.draw_holes(gs)
+    GATK.draw(gs, self)
     for name in ('towers', 'mages', 'archers', 'catapults', 'trebuchets', 'ballistas', 'golems', 'cyclopes', 'enemies'):
       for o in getattr(self, name):
         if o.get('shattered'):
@@ -1566,20 +1827,15 @@ class GameDraw:
             anim_blit(gs, 'satyr', 'ATTACK', o['atk'] // 4, ax, ay, clamp=True)
           else:
             anim_blit(gs, 'satyr', 'IDLE', int(self.wing * 0.45) + o.setdefault('ph', random.randint(0, 11)), ax, ay)
-        elif name == 'catapults':
-          ang, ld = siege_pose(o, 'cat')
-          qa = int(round(ang / 6.0)) * 6
-          spr, ox, oy = cached_sprite(("catapult", qa, ld), 120, 120, 30, 40, lambda s_, x_, y_, qa=qa, ld=ld: draw_catapult(s_, x_, y_, qa, ld))
-          gs.blit(spr, (r.x - ox, r.y - oy))
-        elif name == 'trebuchets':
-          ang, ld = siege_pose(o, 'treb')
-          qa = int(round(ang / 6.0)) * 6
-          spr, ox, oy = cached_sprite(("trebuchet", qa, ld), 160, 160, 45, 60, lambda s_, x_, y_, qa=qa, ld=ld: draw_trebuchet(s_, x_, y_, qa, ld))
-          gs.blit(spr, (r.x - ox, r.y - oy))
-        elif name == 'ballistas':
-          m = o['mode']
-          spr, ox, oy = cached_sprite(("ballista", m), 100, 110, 30, 40, lambda s, x, y, m=m: draw_ballista(s, x, y, m))
-          gs.blit(spr, (r.x - ox, r.y - oy))
+        elif name == 'catapults':                       # your catapult art: cranks back, then swings and throws
+          an_, fi_ = NF.catapult_frame(o, siege_pose)
+          spr, ax_, ay_ = NF.nf_frame('catapult2', an_, fi_, clamp=True)
+          gs.blit(spr, (r.centerx - ax_, r.bottom + 4 - spr.get_height()))
+        elif name in ('trebuchets', 'ballistas'):        # your trebuchet and ballista art
+          art = 'trebuchet2' if name == 'trebuchets' else 'ballista2'
+          an_, fi_ = NF.trebuchet_frame(o) if name == 'trebuchets' else NF.ballista_frame(o)
+          spr, ax_, ay_ = NF.nf_frame(art, an_, fi_, clamp=True)
+          gs.blit(spr, (r.centerx - ax_, r.bottom + 4 - spr.get_height()))
         elif o.get('kind') == 'wyvern':
           wf = int(((self.wing * 1.6 + o['phase']) % (2 * math.pi)) / (2 * math.pi) * 6) % 6
           k_, ax, ay = unit_anchor(name, o)
@@ -1600,8 +1856,8 @@ class GameDraw:
               c = int(235 - 150 * u)
               pygame.draw.line(gs, (c, c + 4 if c < 251 else 255, min(255, c + 20)), prev, pt, 1)
               prev = pt
-            spr = ws_frame('s_walk', int(o['age'] * 0.4 + o['phase'] * 3), 0.713)
-            gs.blit(spr, (r.centerx - spr.get_width() // 2 + int(math.sin(o['age'] * 0.15) * 3), r.centery - spr.get_height() // 2))
+            spr, ax_, ay_ = sp_frame('walk', int(o['age'] * 0.3 + o['phase'] * 3))   # legs paddling as it drifts on its silk
+            gs.blit(spr, (r.centerx - ax_ + int(math.sin(o['age'] * 0.15) * 3), r.centery - ay_))
           elif o.get('foe') in ('moth', 'bat'):
             k_ = o['foe']
             if o.get('cast', 0) > 0:
@@ -1611,6 +1867,10 @@ class GameDraw:
             if k_ == 'moth' and o.get('cast', 0) > 20:
               add_glow(gs, r.centerx - 30, r.centery - 6, 44, (60, 20, 80))
             gs.blit(spr, (r.centerx - ax, r.centery - ay))
+          elif o.get('isle'):
+            ISL.draw(gs, self, o)
+          elif o.get('nf'):
+            NF.draw(gs, self, o)
           elif o.get('foe') == 'witch':
             if o.get('cast', 0) > 0:
               spr = ws_frame('w_attack', min(5, int(o['cast'] / 6)), 1.3)
@@ -1666,11 +1926,11 @@ class GameDraw:
       if o.get('kind') == 'sonic' and not o.get('shattered'):          # bat screech: rings of red sound
         o['fr'] = o.get('fr', 0) + 1
         th = math.atan2(-o['vy'], o['vx'])
-        add_glow(gs, int(o['x']), int(o['y']), 30, (70, 10, 16))
+        add_glow(gs, int(o['x']), int(o['y']), 30, (20, 50, 70) if o.get('pal') else (70, 10, 16))
         for k in range(3):
           rad = 8 + k * 7 + (o['fr'] % 6)
           cxo, cyo = o['x'] - math.cos(th) * rad, o['y'] + math.sin(th) * rad
-          col = ((255, 230, 230), (255, 90, 100), (200, 30, 50))[k]
+          col = o.get('pal', ((255, 230, 230), (255, 90, 100), (200, 30, 50)))[k]
           pygame.draw.arc(gs, col, (int(cxo - rad), int(cyo - rad), rad * 2, rad * 2), th - 0.9, th + 0.9, 3 if k else 2)
         continue
       if o.get('kind') == 'mothorb' and not o.get('shattered'):        # moth magic: a pulsing violet sphere with sparkles
@@ -1783,8 +2043,10 @@ class GameDraw:
     for coin in self.coins:
       gs.blit(coin_sprite(int(self.anim * 4) + coin['rect'].y), (coin['rect'].x - 3, coin['ry'] - 2))
     for pu in self.powerups:
-      add_glow(gs, pu['rect'].x + 17, pu['ry'] + 17, 30 + int(math.sin(pu['t'] * 2) * 5), (110, 30, 10))
-      gs.blit(powerup_sprite(int(pu['t'] * 1.5)), (pu['rect'].x - 3, pu['ry'] - 3))
+      cx_, cy_ = pu['rect'].centerx, pu['ry'] + pu['rect'].h // 2
+      add_glow(gs, cx_, cy_, 35 + int(math.sin(pu['t'] * 2) * 6), (110, 30, 10))
+      spr = big_crystal(int(pu['t'] * 1.5))
+      gs.blit(spr, (cx_ - spr.get_width() // 2, cy_ - spr.get_height() // 2))
 
     b = self.boss
     if b:
@@ -1796,6 +2058,8 @@ class GameDraw:
         self.draw_beholder(gs, b)
       elif b['type'] == 'hydra':
         self.draw_hydra(gs, b)
+      elif b['type'] in NB.NEW_BOSSES:
+        NB.draw(gs, b)
       elif b['type'] == 'demon':
         self.draw_demon(gs, b)
       elif b['type'] == 'phoenix':
@@ -1812,6 +2076,45 @@ class GameDraw:
         gs.blit(spr, (int(c['x']) - ax, int(c['y']) - ay))
       elif c['k'] == 'cyclops':
         gs.blit(cyc_frame('death', min(c['n'] - 1, c['t'] // 5), 1.25), (int(c['x']), int(c['y'])))
+      elif c['k'] == 'nf':
+        NF.draw_corpse(gs, c)
+      elif c['k'] == 'siege':                            # buckling: shakes, leans over and flashes before it bursts
+        f = c['t'] / float(c['rate'])
+        key = ('siege_lean', id(c['img']), int(f * 8), c['lean'])
+        spr = SCALED.get(key)
+        if spr is None:
+          src = c['img']
+          ck = src.get_colorkey() if hasattr(src, 'get_colorkey') else None
+          if ck is not None:                             # real alpha first, so turning it doesn't show the key colour
+            src = src.copy()
+            src.set_colorkey(ck)
+            try:
+              src = src.convert_alpha()
+            except Exception:
+              pass
+          spr = pygame.transform.rotate(src, c['lean'] * int(f * 8) * 3)
+          if len(SCALED) > 900:
+            SCALED.clear()
+          SCALED[key] = spr
+        w0, h0 = c['img'].get_size()
+        jx, jy = random.randint(-3, 3), random.randint(-2, 2)
+        gs.blit(spr, (int(c['x']) + w0 // 2 - spr.get_width() // 2 + jx, int(c['y']) + h0 - spr.get_height() + jy + int(f * 6)))
+        if c['t'] % 4 < 2:
+          add_glow(gs, int(c['cx']), int(c['cy']), 46, (90, 40, 10))
+      elif c['k'] == 'witch':
+        spr = ws_frame('w_death', min(c['n'] - 1, c['t'] // c['rate']), 1.3)
+        end = c['n'] * c['rate']
+        if c['t'] > end:
+          spr = spr.copy()
+          spr.set_alpha(max(0, 255 - (c['t'] - end) * 9))
+        gs.blit(spr, (int(c['x']), int(c['y'])))
+      elif c['k'] == 'spider':                           # your spider's own death animation, then it fades
+        spr, ax_, ay_ = sp_frame('death', c['t'] // c['rate'], clamp=True)
+        end = c['n'] * c['rate']
+        if c['t'] > end:
+          spr = spr.copy()
+          spr.set_alpha(max(0, 255 - (c['t'] - end) * 9))
+        gs.blit(spr, (int(c['x']) - ax_, int(c['y']) - ay_))
       else:
         anim_blit(gs, c['k'], c.get('anim', 'DEATH'), c['t'] // c.get('rate', 4), c['x'], c['y'], clamp=True)
     for p in self.rubble:
@@ -1840,8 +2143,11 @@ class GameDraw:
       pygame.draw.lines(gs, col, False, pts, w)
       pygame.draw.lines(gs, (255, 255, 240), False, pts, max(1, w - 4))
 
-    gs.blit(GROUND, (0, GROUND_Y))
-    self.lift_ground(gs)
+    if UIX.art_ok('level'):
+      UIX.level_ground(gs, self.world(), getattr(self, 'ground_x', 0.0), not self.day)
+    else:
+      gs.blit(GROUND, (0, GROUND_Y))
+      self.lift_ground(gs)
     if self.lava:
       fr = int(self.anim * 12)
       for p in self.lava:
@@ -1864,7 +2170,7 @@ class GameDraw:
       if self.flip_t > 0:
         self.draw_flip_dragon(gs, d)
       else:
-        if self.selected == "EAGLE":                  # dives (attack frames) only while it strikes
+        if self.selected in TALON_DRAGONS:            # dives (attack frames) only while it strikes
           tl = getattr(self, 'talon', None)
           if self.breath:
             add_glow(gs, d.centerx, d.centery, 60, (70, 50, 14))
@@ -1873,10 +2179,12 @@ class GameDraw:
             if tmp is None:
               tmp = self._eagle_tmp = pygame.Surface((168, 128), pygame.SRCALPHA)
             tmp.fill((0, 0, 0, 0))
-            draw_any_dragon(tmp, "EAGLE", PX.OX, PX.OY, 0, self.flap_ph, True, False)
+            draw_any_dragon(tmp, self.selected, PX.OX, PX.OY, 0, self.flap_ph, True, False)
             gs.blit(pygame.transform.flip(tmp, True, False), (d.x + d.w - 168 + PX.OX, d.y - PX.OY))
           else:
-            draw_any_dragon(gs, "EAGLE", d.x, d.y, 0 if tl else int(self.vel * 0.8), self.flap_ph, bool(tl), getattr(self, 'flap_left', 0.0) > 0 and not tl)
+            draw_any_dragon(gs, self.selected, d.x, d.y, 0 if tl else int(self.vel * 0.8), self.flap_ph, bool(tl), getattr(self, 'flap_left', 0.0) > 0 and not tl)
+        elif self.selected == "WRAITH" and getattr(self, 'phase_a', 0.0) > 0:
+          self.draw_phased(gs, d)
         else:
           draw_any_dragon(gs, self.selected, d.x, d.y, int(self.vel * 0.8), self.flap_ph, self.breath, getattr(self, 'flap_left', 0.0) > 0)
     pet = getattr(self, 'pet', None)
@@ -1899,7 +2207,9 @@ class GameDraw:
       if self.selected == "WRAITH" and sl:
         add_glow(gs, int(sl[2]), int(sl[3]), 40, (20, 80, 100))
         draw_siphon(gs, sl[0], sl[1], sl[2], sl[3], int(pygame.time.get_ticks() / 33))
-      if self.selected in ("RED", "BLUE", "GREEN", "ALIEN", "SILVER", "SKELETAL", "CHINESE"):
+      if self.selected == "SILVER":                       # the Wind dragon's gale: streaks of wind tearing forward across the blast zone
+        self.draw_gale(gs, d)
+      if self.selected in ("RED", "BLUE", "GREEN", "ALIEN", "SKELETAL"):   # (the Wind and Lung dragons' attacks are in their own frames)
         fr = int(self.anim * 14)
         gs.blit(({"RED": lava_stream_sprite, "BLUE": frost_stream_sprite, "GREEN": acid_stream_sprite, "ALIEN": acid_stream_sprite, "SILVER": blade_stream_sprite, "SKELETAL": death_stream_sprite, "CHINESE": water_stream_sprite}[self.selected])(fr % 4), (hx - 6, hy + 3 - 64))
     if getattr(self, 'novas', None):                     # Fey Dragon's Glamour Nova rings
@@ -1957,7 +2267,7 @@ class GameDraw:
   def draw_hud(self):
     gs = game_surface
     sel = self.selected
-    gx, gy, gw, gh = 15, 100, 44, 310
+    gx, gy, gw, gh = CHARGE_X[0], 100, 44, 310
     panel(gs, pygame.Rect(gx, gy, gw, gh), PANEL_DARK, 215, GOLD_BORDER, 3, 8)
     inner = pygame.Rect(gx + 10, gy + 15, gw - 20, gh - 30)
     pygame.draw.rect(gs, (40, 10, 10), inner, border_radius=4)
@@ -1971,6 +2281,7 @@ class GameDraw:
     gs.blit(v, (gx + gw // 2 - v.get_width() // 2, gy + gh // 2 - v.get_height() // 2))
 
     draw_button(gs, PAUSE_BTN, "PAUSE", PARCHMENT, PAUSE_BTN.collidepoint(self.mouse), font=small_font)
+    PERK.draw(gs, self, (small_font, hud_font), panel, (PANEL_DARK, GOLD_BORDER, PARCHMENT), ULT_BTN)   # level 20: the Ultimate
 
     if self.shield_active:
       panel(gs, SHIELD_BTN, (20, 40, 80), 235, ICE_BLUE, 3, 12)
@@ -2017,7 +2328,7 @@ class GameDraw:
         h_ = life_heart(i < self.hearts, int(self.anim * 3) + i * 3, 44)
         gs.blit(h_, (hp.x + 34 + i * 48 - 22, hp.centery - 22))
 
-    q = self.bounty
+    q = self.bounty if getattr(self, 'mode', 'adventure') in ('adventure', 'endless') else None   # (no quests on the course or in the tutorial)
     if q:
       br = pygame.Rect(434, 15, 182, 50)
       panel(gs, br, PARCHMENT, 245, WOOD_DARK, 3, 5)
@@ -2075,34 +2386,66 @@ class GameDraw:
       add_glow(gs, int(w['x']), int(w['y']), 50, (90, 30, 6))
 
   def draw_maw(self, gs, mx, my):
-    """Cosmic Whale: a small starry vortex swirling into its open jaws"""
+    """Cosmic Whale: a big starry vortex in front of its open jaws, with streams of starlight being sucked in"""
     t = pygame.time.get_ticks() / 1000.0
-    cx, cy = mx + 16, my
-    add_glow(gs, int(cx), int(cy), 46, (36, 22, 80))
-    for arm in range(3):
+    cx, cy = mx + 58, my                                 # just in front of the jaws, not over the head
+    R = MAW['range']
+    add_glow(gs, int(cx + 40), int(cy), 90, (30, 18, 70))
+    for i in range(10):                                  # suction streaks curving into the mouth from the whole cone
+      ph = (t * 1.6 + i * 0.137) % 1.0
+      ang = (i / 9.0 - 0.5) * 1.3
+      d0 = R * (1 - ph)
+      d1 = max(10, d0 - 70)
+      pts = []
+      for k in range(5):
+        dd = d0 + (d1 - d0) * k / 4.0
+        a = ang * (dd / R) + math.sin(t * 3 + i) * 0.08 * (dd / R)
+        pts.append((int(cx + math.cos(a) * dd), int(cy + math.sin(a) * dd * 0.9)))
+      bright = int(120 + 135 * ph)
+      pygame.draw.lines(gs, (bright, min(255, bright + 20), 255), False, pts, 2 if ph > 0.5 else 1)
+    for arm in range(4):                                 # the swirling vortex itself
       prev = None
-      for k in range(9):
-        rr = 4 + k * 4.2
-        a = t * 6.0 + arm * 2.094 - k * 0.5
-        p = (int(cx + math.cos(a) * rr * 1.15), int(cy + math.sin(a) * rr * 0.8))
+      for k in range(13):
+        rr = 5 + k * 5.0
+        a = t * 7.0 + arm * 1.571 - k * 0.45
+        p = (int(cx + math.cos(a) * rr * 1.2), int(cy + math.sin(a) * rr * 0.85))
         if prev:
-          c = ((255, 255, 255), (220, 200, 255), (160, 140, 245), (110, 90, 210))[min(3, k // 2)]
-          pygame.draw.line(gs, c, prev, p, 2)
+          c = ((255, 255, 255), (225, 205, 255), (170, 150, 250), (120, 100, 220), (80, 70, 180))[min(4, k // 3)]
+          pygame.draw.line(gs, c, prev, p, 3 if k < 4 else 2)
         prev = p
-    for k in range(2):                                   # rings closing in on the mouth
-      ph = ((t * 1.8 + k * 0.5) % 1.0)
-      rr = int(44 * (1 - ph)) + 4
+    for k in range(3):                                   # rings closing in on the mouth
+      ph = ((t * 1.8 + k * 0.33) % 1.0)
+      rr = int(70 * (1 - ph)) + 5
       col = (int(150 + 100 * ph), int(130 + 110 * ph), 255)
-      pygame.draw.ellipse(gs, col, (int(cx - rr * 1.15), int(cy - rr * 0.8), int(rr * 2.3), int(rr * 1.6)), 1)
+      pygame.draw.ellipse(gs, col, (int(cx - rr * 1.2), int(cy - rr * 0.85), int(rr * 2.4), int(rr * 1.7)), 2)
+    pygame.draw.circle(gs, (255, 255, 255), (int(cx), int(cy)), 4)
+    tg = getattr(self, 'maw_target', None)
+    if tg:                                               # a tunnel of starlight dragging at the boss
+      bx, by = tg
+      add_glow(gs, int(bx), int(by), 70, (50, 30, 110))
+      for lane in (-1, 0, 1):                            # three twisting ribbons of starlight from the boss to the maw
+        prev = None
+        for k in range(17):
+          f = k / 16.0
+          px = bx + (cx - bx) * f
+          py = by + (cy - by) * f + math.sin(t * 8 + f * 9 + lane * 2.1) * 18 * (1 - f) * (1 if lane else 0.5)
+          if prev:
+            c = (int(130 + 120 * f), int(110 + 130 * f), 255)
+            pygame.draw.line(gs, c, prev, (int(px), int(py)), 2)
+          prev = (int(px), int(py))
+      for i in range(22):                                # bits of the boss being pulled along them
+        ph = (t * 1.9 + i / 22.0) % 1.0
+        px = bx + (cx - bx) * ph
+        py = by + (cy - by) * ph + math.sin(t * 9 + i * 1.7) * 20 * (1 - ph)
+        c = ((255, 140, 140) if i % 3 == 0 else (int(170 + 85 * ph), int(150 + 100 * ph), 255))
+        pygame.draw.circle(gs, c, (int(px), int(py)), 2 + int(4 * (1 - ph)))
 
   def draw_novas(self, gs):
     d = self.dragon
     t = pygame.time.get_ticks() / 1000.0
     for nv in self.novas:
       cx, cy, r = d.x + nv['ox'], d.y + nv['oy'], int(nv['r'])
-      fade = max(0.0, 1.0 - nv['r'] / float(NOVA['r']))
-      if fade <= 0.05:
-        continue
+      fade = max(0.35, 1.0 - nv['r'] / float(NOVA['r']))   # (stays bright enough to see all the way across)
       cx, cy = int(cx), int(cy)
       w0 = max(1, int(6 * fade + 0.5))
       pygame.draw.circle(gs, (255, 150, 240), (cx, cy), r, w0)
@@ -2110,8 +2453,9 @@ class GameDraw:
         pygame.draw.circle(gs, (140, 240, 255), (cx, cy), r - 7, max(1, w0 // 2))
       if r > 16 and fade > 0.4:
         pygame.draw.circle(gs, (255, 255, 230), (cx, cy), r - 14, 1)
-      for k in range(16 if fade > 0.3 else 8):            # sparkles riding the ring
-        a = k * math.pi / (8 if fade > 0.3 else 4) + t * 2.0
+      nsp = 16 if r < 300 else 24
+      for k in range(nsp):                                # sparkles riding the ring
+        a = k * 2 * math.pi / nsp + t * 2.0
         x, y = int(cx + math.cos(a) * r), int(cy + math.sin(a) * r)
         q = 2 + int(3 * fade)
         pygame.draw.line(gs, (255, 255, 255), (x - q, y), (x + q, y), 1)
@@ -2146,7 +2490,7 @@ class GameDraw:
       spr = spr.copy()
       spr.set_alpha(max(0, al))
     add_glow(gs, cx, cy, 120, (22, 40, 26))
-    if st != 'dying' and atk == 'laser' and 12 <= at < 32 and at % 6 < 4:   # where the ray is about to go
+    if st != 'dying' and atk == 'laser' and 10 <= at < 28 and at % 6 < 4:   # where the ray is about to go
       sx, sy, _a = beam_line(b)
       ca, sa = math.cos(b.get('ang', math.pi)), math.sin(b.get('ang', math.pi))
       for q in range(0, 1500, 34):
@@ -2161,7 +2505,7 @@ class GameDraw:
 
   def draw_hydra(self, gs, b):
     st, atk, at = b['state'], b.get('atk'), b.get('at', 0)
-    cx, cy = int(b['x']) + 75, int(b['y']) + 65
+    cx, cy = int(b['x']) + 98, int(b['y']) + 85
     if st == 'dying':
       fi = 0 if b.get('landed', -1) < 0 else (b['dt'] - b['landed']) // 5
       spr, ax, ay = hyd_frame('death', fi)
@@ -2172,10 +2516,10 @@ class GameDraw:
     if al < 255:
       spr = spr.copy()
       spr.set_alpha(max(0, al))
-    add_glow(gs, cx, cy, 130, (40, 24, 50))
+    add_glow(gs, cx, cy, 170, (40, 24, 50))
     gs.blit(spr, (cx - ax, cy - ay))
     if atk == 'lunge_warn' and at % 10 < 6 and st != 'dying':
-      blit_text(gs, hud_font, "!", (255, 90, 60), (cx, cy - 130), "center")
+      blit_text(gs, hud_font, "!", (255, 90, 60), (cx, cy - 170), "center")
 
   def draw_jabber(self, gs, b):
     st, atk, at = b['state'], b.get('atk'), b.get('at', 0)
@@ -2265,26 +2609,129 @@ class GameDraw:
         pygame.draw.polygon(spr, (60, 30, 10), [(cx, 20 - 12), (cx + 10, 20), (cx, 20 + 12), (cx - 10, 20)], 1)
       BOSSBAR_CACHE[key] = spr
     gs.blit(spr, (x0 - 20, y0 - 8))
-    nm = {"griffin": "GRIFFIN", "demon": "FIRE DEMON", "phoenix": "PHOENIX", "beholder": "BEHOLDER", "jabber": "JABBERWOCK", "hydra": "HYDRA"}.get(b['type'], "SKY FORTRESS")
+    nm = {"griffin": "GRIFFIN", "demon": "FIRE DEMON", "phoenix": "PHOENIX", "beholder": "BEHOLDER", "jabber": "JABBERWOCK", "hydra": "HYDRA", "sphinx": "SPHINX", "manticore": "MANTICORE", "mothman": "MOTHMAN"}.get(b['type'], "SKY FORTRESS")
     blit_text(gs, small_font, nm, (255, 226, 150), (WIDTH // 2, y0 - 26), "center")
     blit_text(gs, tiny_font, "%d%%" % int(pct * 100 + 0.5), (255, 240, 220), (WIDTH // 2, y0 + bh // 2), "center")
 
   def draw_gameover(self):
     gs = game_surface
     dim(gs, 120)
-    pnl = pygame.Rect(WIDTH // 2 - 220, HEIGHT // 2 - 130, 440, 260)
+    if GOA.ok():
+      return self.draw_art_gameover()
+    pnl = pygame.Rect(WIDTH // 2 - 340, HEIGHT // 2 - 192, 680, 400)
     panel(gs, pnl, PARCHMENT, 252, WOOD_DARK, 6, 12)
-    blit_text(gs, hud_font, "SIEGE CASUALTY", (190, 40, 20), (pnl.centerx, pnl.top + 45), "center", shadow=False)
-    blit_text(gs, button_font, "Score: %d" % self.score, WOOD_DARK, (pnl.centerx, pnl.top + 100), "center", shadow=False)
+    blit_text(gs, hud_font, "SIEGE CASUALTY", (190, 40, 20), (pnl.centerx, pnl.top + 40), "center", shadow=False)
+    mode = getattr(self, 'mode', 'adventure')
+    if mode == 'obstacle':
+      main = "Pillars passed: %d" % getattr(self, 'pillars_passed', 0)
+    else:
+      main = ("Endless  -  Score: %d" if mode == 'endless' else "Score: %d") % self.score
+    blit_text(gs, button_font, main, WOOD_DARK, (pnl.centerx, pnl.top + 88), "center", shadow=False)
     if self.new_record:
       pulse = 180 + int(75 * math.sin(self.anim * 6))
-      blit_text(gs, small_font, "NEW REALM RECORD!", (pulse, int(pulse * 0.6), 20), (pnl.centerx, pnl.top + 132), "center", shadow=False)
+      blit_text(gs, small_font, "NEW REALM RECORD!", (pulse, int(pulse * 0.6), 20), (pnl.centerx, pnl.top + 118), "center", shadow=False)
     else:
-      blit_text(gs, small_font, "Record: %d" % self.data['high_score'], (110, 80, 40), (pnl.centerx, pnl.top + 132), "center", shadow=False)
-    blit_text(gs, small_font, "Coins Pillaged: %d" % int(self.run_coins), (180, 120, 10), (pnl.centerx, pnl.top + 165), "center", shadow=False)
+      rk = MODE.RECORD_KEY.get(mode) or 'high_score'
+      blit_text(gs, small_font, "Record: %d" % self.data.get(rk, 0), (110, 80, 40), (pnl.centerx, pnl.top + 118), "center", shadow=False)
+    blit_text(gs, small_font, "Coins Pillaged: %d" % int(self.run_coins), (180, 120, 10), (pnl.centerx, pnl.top + 144), "center", shadow=False)
+    lv, xp = self.dragon_lv()                              # the dragon's level and the XP it just earned
+    name = DRAGON_PALETTES.get(self.selected, {}).get('title', 'Dragon')
+    sh = getattr(self, 'xp_share', 0)
+    extra = ("   (%d from your %sbaby)" % (sh, "matching " if getattr(self, 'xp_match', False) else "")) if sh else ""
+    blit_text(gs, tiny_font, "%s  -  Level %d   +%d XP%s" % (name, lv, getattr(self, 'xp_gain', 0), extra), (70, 50, 30), (pnl.centerx, pnl.top + 172), "center", shadow=False)
+    bar = pygame.Rect(pnl.centerx - 130, pnl.top + 186, 260, 9)
+    pygame.draw.rect(gs, (90, 70, 50), bar, border_radius=4)
+    if lv < self.dragon_cap():
+      f = min(1.0, xp / float(dragon_need(lv)))
+      if f > 0:
+        pygame.draw.rect(gs, (230, 170, 40), (bar.x, bar.y, max(4, int(bar.w * f)), bar.h), border_radius=4)
+    else:
+      pygame.draw.rect(gs, (230, 170, 40), bar, border_radius=4)
+    if getattr(self, 'level_up', 0):
+      pulse = 180 + int(75 * math.sin(self.anim * 6))
+      msg = "LEVEL UP!  Now level %d" % self.level_up
+      if self.level_up == GROUND_LEVEL and self.selected in GROUND_DRAGONS:
+        msg = "LEVEL %d!  Ground attack unlocked!" % self.level_up
+      elif self.level_up == PERK.LV_SPECIAL:
+        msg = "LEVEL 10!  Stronger special unlocked!"
+      elif self.level_up == PERK.LV_PERK:
+        msg = "LEVEL 15!  " + PERK.PERK_TEXT.get(PERK.PERK.get(self.selected), "New skill unlocked!")
+      elif self.level_up == PERK.LV_ULT:
+        msg = "LEVEL 20!  Ultimate unlocked: " + PERK.ULT_NAME.get(self.selected, "")
+      blit_text(gs, tiny_font, msg, (pulse, int(pulse * 0.55), 20), (pnl.centerx, pnl.top + 212), "center", shadow=False)
     if self.over_t > 25:
+      draw_button(gs, RETRY_BTN, "RETRY", BANNER_GOLD, RETRY_BTN.collidepoint(self.mouse), font=small_font)
       draw_button(gs, REPORT_BTN, "AFTERMATH REPORT", PARCHMENT, REPORT_BTN.collidepoint(self.mouse), font=small_font)
-      draw_button(gs, OVER_MENU_BTN, "MENU", PARCHMENT, OVER_MENU_BTN.collidepoint(self.mouse), font=small_font)
+      draw_button(gs, OVER_MENU_BTN, "MAIN MENU", PARCHMENT, OVER_MENU_BTN.collidepoint(self.mouse), font=small_font)
+
+  def go_lines(self):
+    """the words on the game-over parchment: (main line, record line, record is new, coins line, xp line, level-up line)"""
+    mode = getattr(self, 'mode', 'adventure')
+    if mode == 'obstacle':
+      main = "Pillars passed: %d" % getattr(self, 'pillars_passed', 0)
+    else:
+      main = ("Endless  -  Score: %d" if mode == 'endless' else "Score: %d") % self.score
+    if self.new_record:
+      rec = "NEW REALM RECORD!"
+    else:
+      rk = MODE.RECORD_KEY.get(mode) or 'high_score'
+      rec = "Record: %d" % self.data.get(rk, 0)
+    coins = "Coins Pillaged: %d" % int(self.run_coins)
+    lv, xp = self.dragon_lv()
+    name = DRAGON_PALETTES.get(self.selected, {}).get('title', 'Dragon')
+    sh = getattr(self, 'xp_share', 0)
+    extra = ("   (%d from your %sbaby)" % (sh, "matching " if getattr(self, 'xp_match', False) else "")) if sh else ""
+    xpl = "%s  -  Level %d   +%d XP%s" % (name, lv, getattr(self, 'xp_gain', 0), extra)
+    up = None
+    if getattr(self, 'level_up', 0):
+      up = "LEVEL UP!  Now level %d" % self.level_up
+      if self.level_up == GROUND_LEVEL and self.selected in GROUND_DRAGONS:
+        up = "LEVEL %d!  Ground attack unlocked!" % self.level_up
+      elif self.level_up == PERK.LV_SPECIAL:
+        up = "LEVEL 10!  Stronger special unlocked!"
+      elif self.level_up == PERK.LV_PERK:
+        up = "LEVEL 15!  " + PERK.PERK_TEXT.get(PERK.PERK.get(self.selected), "New skill unlocked!")
+      elif self.level_up == PERK.LV_ULT:
+        up = "LEVEL 20!  Ultimate unlocked: " + PERK.ULT_NAME.get(self.selected, "")
+    return main, rec, self.new_record, coins, xpl, up, lv, xp
+
+  def draw_art_gameover(self):
+    """your Siege Casualty panel: the words are drawn on the parchment, the buttons and XP bar are your art"""
+    gs = game_surface
+    px, pt = WIDTH // 2 - GOA.PANEL_W // 2, (HEIGHT - GOA.PANEL_H) // 2
+    gs.blit(GOA.img('go_panel'), (px, pt))
+    cx = WIDTH // 2
+    main, rec, new, coins, xpl, up, lv, xp = self.go_lines()
+    ink = (54, 30, 14)
+    blit_text(gs, button_font, main, ink, (cx, pt + 178), "center", shadow=False)
+    if new:
+      pulse = 170 + int(60 * math.sin(self.anim * 6))
+      blit_text(gs, small_font, rec, (pulse, int(pulse * 0.55), 10), (cx, pt + 208), "center", shadow=False)
+    else:
+      blit_text(gs, small_font, rec, (120, 82, 30), (cx, pt + 208), "center", shadow=False)
+    blit_text(gs, small_font, coins, (176, 116, 16), (cx, pt + 235), "center", shadow=False)
+    img = tiny_font.render(xpl, True, ink)
+    if img.get_width() > GOA.PANEL_W - 300:
+      img = pygame.transform.smoothscale(img, (GOA.PANEL_W - 300, img.get_height()))
+    gs.blit(img, img.get_rect(center=(cx, pt + 259)))
+    bx, by = cx - GOA.BAR_W // 2, pt + 268                 # the XP bar: your empty bar, then the fill up to the XP earned
+    tx, ty, tw, th = GOA.TRACK
+    f = 1.0 if lv >= self.dragon_cap() else max(0.0, min(1.0, xp / float(dragon_need(lv))))
+    gs.blit(GOA.img('go_bar'), (bx, by))
+    if f > 0:                                             # (the fill shows through the dark track)
+      gs.blit(GOA.img('go_fill'), (bx + tx, by + ty), (0, 0, max(2, int(tw * f)), th))
+    if up:
+      pulse = 180 + int(75 * math.sin(self.anim * 6))
+      blit_text(gs, tiny_font, up, (pulse, int(pulse * 0.5), 20), (cx, pt + 318), "center", shadow=False)
+    if self.over_t > 25:
+      for r, lab in ((RETRY_BTN, "RETRY"), (REPORT_BTN, "AFTERMATH REPORT"), (OVER_MENU_BTN, "MAIN MENU")):
+        hov = r.collidepoint(self.mouse)
+        gs.blit(GOA.img('go_btn_down' if hov else 'go_btn'), r.topleft)
+        for sz in (22, 20, 18, 16):                       # (shrink to fit between the gems)
+          t = UIX.small_fire(lab, sz)
+          if t.get_width() <= r.w - 76:
+            break
+        gs.blit(t, t.get_rect(center=(r.centerx, r.centery - 1)))
 
   def draw_report(self):
     """Aftermath report: the war-camp tent, the run written up on two scrolls."""

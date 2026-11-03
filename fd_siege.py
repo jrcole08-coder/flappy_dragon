@@ -486,8 +486,6 @@ def draw_ballista(surface, x, y, mode, style=None):
 def prewarm_siege():
   """paint the siege layers and ballista poses up front (called when a run starts)."""
   try:
-    _cat_layers(SIEGE_STYLE)
-    _treb_layers(SIEGE_STYLE)
     _boulder_img(4.2, SIEGE_STYLE == 1)
   except Exception:
     pass

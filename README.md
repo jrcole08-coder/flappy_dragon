@@ -1,4 +1,4 @@
-# Flappy Dragon (beta)
+# Raid the Realm: Dragon Siege (beta)
 
 A dragon-flying siege game made with pygame.
 

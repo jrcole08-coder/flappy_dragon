@@ -345,7 +345,7 @@ def _grad(w, h, stops, rng):
   return g
 
 
-def build_title(sizes=(96, 72), stops=FIRE_TEXT, words=None):
+def build_title(sizes=(96, 72), stops=FIRE_TEXT, words=None, shadow=(6, 8)):
   """Medieval title: bigger drop-caps, gold rim, dark outline, bevel, textured metal fill, drop shadow."""
   rng = random.Random(11)
   big = pygame.font.SysFont("serif", sizes[0], bold=True)
@@ -371,7 +371,7 @@ def build_title(sizes=(96, 72), stops=FIRE_TEXT, words=None):
       for ox, oy in offs:
         out.blit(tint, (pad + ix + ox + dx0, pad + asc - a + oy + dy0))
   ring = lambda r: [(dx, dy) for dx in range(-r, r + 1) for dy in range(-r, r + 1) if dx * dx + dy * dy <= r * r + 1]
-  stamp((10, 4, 3), [(0, 0)], 6, 8)
+  stamp((10, 4, 3), [(0, 0)], shadow[0], shadow[1])
   stamp((20, 8, 6), ring(4))
   stamp((206, 146, 36), ring(2))
   stamp((255, 236, 160), [(-1, -1)])
@@ -495,11 +495,11 @@ def menu_art():
 _FIRE = {}
 
 
-def fire_text(txt, size):
-  k = (txt, size)
+def fire_text(txt, size, shadow=(6, 8)):
+  k = (txt, size, shadow)
   if k not in _FIRE:
     try:
-      _FIRE[k] = build_title((size, size), FIRE_TEXT, txt).convert_alpha()
+      _FIRE[k] = build_title((size, size), FIRE_TEXT, txt, shadow).convert_alpha()
     except Exception:
       f = pygame.font.SysFont("serif", size, bold=True)
       _FIRE[k] = f.render(txt, True, (255, 200, 80)).convert_alpha()

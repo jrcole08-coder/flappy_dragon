@@ -1,11 +1,11 @@
 [app]
-title = Flappy Dragon
+title = Raid the Realm: Dragon Siege
 package.name = flappydragon
 package.domain = org.dragon
 source.dir = .
 source.include_exts = py
 source.exclude_dirs = .github, bin, .buildozer, out
-version = 0.2.0
+version = 0.3.0
 requirements = hostpython3==3.10.14,python3==3.10.14,pygame,pyjnius
 icon.filename = %(source.dir)s/icon.png
 presplash.filename = %(source.dir)s/presplash.jpg

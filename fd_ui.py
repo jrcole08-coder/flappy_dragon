@@ -169,10 +169,10 @@ def draw_title(surf, label, cy, anim, torches=True):
 
 
 # ---------------------------------------------------------------- icon tab bar
-TABS = [('home', 'Home'), ('lair', 'Den'), ('roster', 'Roster'), ('hoard', 'Hoard'), ('quests', 'Quests'),
-        ('enemies', 'Bestiary'), ('eggs', 'Eggs'), ('hatchlings', 'Babies'), ('options', 'Options')]
+TABS = [('home', 'Home'), ('lair', 'Lair'), ('roster', 'Roost'), ('hoard', 'Forge'), ('quests', 'Quests'), ('enemies', 'Bestiary'),
+        ('eggs', 'Eggs'), ('hearths', 'Hearths'), ('hatchlings', 'Whelps'), ('worlds', 'Realm'), ('options', 'Options')]
 TAB_OF_STATE = {'LAIR': 'lair', 'SELECT': 'roster', 'RARE_SELECT': 'roster', 'HOARD': 'hoard', 'QUESTS': 'quests',
-                'ENEMIES': 'enemies', 'EGGS': 'eggs', 'ROOSTS': 'eggs', 'HATCHLINGS': 'hatchlings', 'OPTIONS': 'options'}
+                'ENEMIES': 'enemies', 'EGGS': 'eggs', 'ROOSTS': 'hearths', 'WORLDS': 'worlds', 'HATCHLINGS': 'hatchlings', 'OPTIONS': 'options', 'ACHIEVE': 'quests'}
 TAB_W, TAB_H = 74, 56
 TAB_BAR = pygame.Rect(WIDTH // 2 - (len(TABS) * TAB_W + 24) // 2, HEIGHT - TAB_H - 2, len(TABS) * TAB_W + 24, TAB_H)
 
@@ -393,8 +393,8 @@ def _sign(label, w, h, hover):
   return _cache(('sign', label, w, h, hover), build)
 
 
-LAIR_ICONS = {'roster': 'roster', 'hoard': 'hoard', 'quests': 'quests', 'enemies': 'enemies', 'eggs': 'eggs', 'hatchlings': 'hatchlings'}
-LAIR_LABELS = {'roster': 'DRAGON ROSTER', 'hoard': 'THE HOARD', 'quests': 'QUESTS', 'enemies': 'BESTIARY', 'eggs': 'THE HATCHERY', 'hatchlings': 'HATCHLINGS'}
+LAIR_ICONS = {'roster': 'roster', 'hoard': 'hoard', 'quests': 'quests', 'enemies': 'enemies', 'eggs': 'eggs', 'hatchlings': 'hatchlings', 'worlds': 'quests', 'hearths': 'lair'}
+LAIR_LABELS = {'roster': 'DRAGONS ROOST', 'hoard': 'THE FORGE', 'quests': 'QUESTS', 'enemies': 'BESTIARY', 'eggs': 'HATCHERY', 'hatchlings': 'WHELPS', 'worlds': 'REALM', 'hearths': 'HEARTHS'}
 
 
 def draw_den(surf, game, anim):
@@ -1878,7 +1878,11 @@ try:
   import fd_menuart as MA
 except Exception:
   MA = None
-ART_MODS = [m for m in (OA, LA, FA, BA, QA, SA, EA, YA, HA, RA, IA, MA) if m is not None]
+try:
+  import fd_levelart as VA
+except Exception:
+  VA = None
+ART_MODS = [m for m in (OA, LA, FA, BA, QA, SA, EA, YA, HA, RA, IA, MA, VA) if m is not None]
 
 
 class _Art:
@@ -1914,6 +1918,7 @@ def art_ok(screen='options'):
     need = {'options': ('tab_home', 'background', 'scroll'), 'lair': ('lair_bg', 'sign', 'chain', 'lair_plaque'),
             'bestiary': ('best_bg', 'frame_ruins', 'frame_forest', 'frame_boss', 'star_on', 'star_off', 'tab_left', 'tab_right', 'ink_divider', 'ink_flourish', 'title_plaque', 'coin'),
             'report': ('report_bg', 'coin'),
+            'level': ('lvl_sky_day', 'lvl_sky_night', 'lvl_far', 'lvl_mid', 'lvl_ground'),
             'menu': ('menu_bg', 'menu_title', 'menu_record', 'cloud_a', 'cloud_d', 'red_button', 'coin_box'),
             'info': ('info_bg', 'red_button', 'gstar_on', 'gstar_off', 'pedestal', 'gold_divider', 'egg_common'),
             'hearths': ('hearth_bg', 'egg_common', 'egg_legendary', 'quest_bar', 'wood_button', 'coin'),
@@ -2097,8 +2102,8 @@ def draw_art_study(surf, game, anim, rows, sliders, track):
 
 
 def art_footer(surf, txt):
-  y = SCROLL_ART.bottom - 34
-  im = _ink_font(16).render(txt, True, (70, 44, 20))
+  y = SCROLL_ART.bottom - 32
+  im = _ink_font(15).render(txt, True, (70, 44, 20))
   r = im.get_rect(center=(WIDTH // 2, y))
   surf.blit(im, r)
   orn = ART.scaled('footer_ornament', 60, 20)
@@ -2110,7 +2115,8 @@ ART_ICONS = {'music': 'icon_music', 'sfx': 'icon_sound', 'display': 'icon_displa
              'difficulty': 'icon_difficulty', 'shake': 'icon_camera', 'vibrate': 'icon_vibration'}
 ART_FILL = {'music': (200, 34, 30), 'sfx': (50, 180, 50)}
 ART_TABS = {'home': 'tab_home', 'lair': 'tab_den', 'roster': 'tab_roster', 'hoard': 'tab_hoard', 'quests': 'tab_quests',
-            'enemies': 'tab_bestiary', 'eggs': 'tab_eggs', 'hatchlings': 'tab_babies', 'options': 'tab_options'}
+            'enemies': 'tab_bestiary', 'eggs': 'tab_eggs', 'hatchlings': 'tab_babies', 'options': 'tab_options',
+            'hearths': 'tab_hearths', 'worlds': 'tab_worlds'}
 
 
 def draw_art_tab_bar(surf, active, anim, mouse, badges=()):
@@ -2145,7 +2151,8 @@ def draw_art_tab_bar(surf, active, anim, mouse, badges=()):
 
 # ---------------------------------------------------------------- the Den / Lair from your painted cave art
 LAIR_ART_ICONS = {'roster': 'icon_lair_roster', 'hoard': 'icon_lair_hoard', 'quests': 'icon_lair_quests',
-                  'enemies': 'icon_lair_enemies', 'eggs': 'icon_lair_eggs', 'hatchlings': 'icon_lair_hatchlings'}
+                  'enemies': 'icon_lair_enemies', 'eggs': 'icon_lair_eggs', 'hatchlings': 'icon_lair_hatchlings',
+                  'worlds': 'icon_lair_worlds', 'hearths': 'icon_lair_hearths'}
 
 
 COVER_KEEP = {'best_bg': (285, 1590), 'quest_bg': (560, 1310)}   # parts that must stay fully on screen (x range in the art)
@@ -2224,11 +2231,11 @@ def art_coin_panel(surf, coins, y=12):
 
 
 def art_stone_title(surf, label, cy, anim):
-  w, h = 470, 112
+  t = ENV.fire_text(label, 46)
+  w, h = max(470, t.get_width() + 110), 112             # the plaque stretches for longer names
   p = ART.scaled('lair_plaque', w, h)
   r = p.get_rect(center=(WIDTH // 2, cy))
   surf.blit(p, r)
-  t = ENV.fire_text(label, 46)
   surf.blit(t, t.get_rect(center=(WIDTH // 2, cy - 1)))
   return r
 
@@ -2480,8 +2487,8 @@ def art_best_page(info, side, num):
     coin = ART.scaled('coin', 13, 13)
     for i, (lab, val) in enumerate((("Attack", attack), ("Weak to", weak), ("Appears", appears), ("Bounty", pts + " pts"))):
       yy = 288 + i * 17
-      s.blit(f5.render(lab + ":", True, red), (52, yy - 8))
-      vx = 128
+      s.blit(f5.render(lab + ":", True, red), (40, yy - 8))
+      vx = 52 + f5.size("Appears: ")[0]
       if lab == "Bounty":
         s.blit(coin, (vx, yy - 7))
         vx += 17
@@ -2973,13 +2980,19 @@ def draw_live_menu_bg(surf, anim):
     add_glow(surf, x, int(oy + 330 * k), 60, (int(34 + 14 * math.sin(t * 6 + x)), 12, 2))
 
 
+GAME_TITLE = ("RAID THE REALM", "DRAGON SIEGE")
+
+
 def draw_menu_title(surf, anim, y):
-  w = 560
-  t0 = ART.img('menu_title')
-  h = int(t0.get_height() * w / float(t0.get_width()))
-  r = pygame.Rect(WIDTH // 2 - w // 2, y, w, h)
+  """the game's name on the gold-framed stone plaque: RAID THE REALM over DRAGON SIEGE"""
+  t1 = ENV.fire_text(GAME_TITLE[0], 48)
+  t2 = ENV.fire_text(GAME_TITLE[1], 27, (2, 3))      # (a closer shadow for the small line)
+  w, h = max(600, t1.get_width() + 170), 164
+  r = pygame.Rect(WIDTH // 2 - w // 2, y - 4, w, h)
   add_glow(surf, r.centerx, r.centery, 170, (40, 18, 6))
-  surf.blit(ART.scaled('menu_title', w, h), r.topleft)
+  surf.blit(three_slice('lair_plaque', w, h, 260), r.topleft)
+  surf.blit(t1, t1.get_rect(center=(r.centerx, r.top + 64)))
+  surf.blit(t2, t2.get_rect(center=(r.centerx, r.top + 101)))
   for sx, sy, ph in ((-0.33, 0.28, 0.0), (0.2, 0.22, 1.7), (0.36, 0.62, 3.1)):     # glints on the gold
     rr = int(2 + 6 * ((math.sin(anim * 3 + ph) + 1) / 2))
     cx, cy = int(r.left + (0.5 + sx) * w), int(r.top + sy * h)
@@ -2992,6 +3005,275 @@ def draw_menu_record(surf, rect, score):
   surf.blit(three_slice('menu_record', rect.w, rect.h, 90), rect.topleft)
   t = _fit_text("REALM RECORD: %d" % score, rect.w - 110, 18, (244, 232, 206))
   surf.blit(t, t.get_rect(center=rect.center))
+
+
+# ---------------------------------------------------------------- level backgrounds (one painted set per world)
+try:
+  import fd_world_desert as WDES
+except Exception:
+  WDES = None
+if WDES is not None and WDES not in ART_MODS:
+  ART_MODS.append(WDES)
+try:
+  import fd_world_swamp as WSWP
+except Exception:
+  WSWP = None
+if WSWP is not None and WSWP not in ART_MODS:
+  ART_MODS.append(WSWP)
+try:
+  import fd_world_frozen as WFRZ
+except Exception:
+  WFRZ = None
+if WFRZ is not None and WFRZ not in ART_MODS:
+  ART_MODS.append(WFRZ)
+try:
+  import fd_world_volcano as WVOL
+except Exception:
+  WVOL = None
+if WVOL is not None and WVOL not in ART_MODS:
+  ART_MODS.append(WVOL)
+try:
+  import fd_world_skyisle as WSKY
+except Exception:
+  WSKY = None
+if WSKY is not None and WSKY not in ART_MODS:
+  ART_MODS.append(WSKY)
+try:
+  import fd_world_void as WVOD
+except Exception:
+  WVOD = None
+if WVOD is not None and WVOD not in ART_MODS:
+  ART_MODS.append(WVOD)
+
+# key: (title, art-name prefix, module, far layer y, mid layer y)
+WORLDS = [('kingdom', "The Kingdom", 'lvl', VA, 296, 400),
+          ('desert', "The Desert", 'desert', WDES, 286, 412),
+          ('swamp', "The Swamp", 'swamp', WSWP, 290, 406),
+          ('frozen', "Frozen North", 'frozen', WFRZ, 288, 406),
+          ('volcano', "Volcanic Wastes", 'volcano', WVOL, 288, 406),
+          ('skyisle', "Sky Islands", 'skyisle', WSKY, 288, 406),
+          ('void', "The Void", 'void', WVOD, 288, 406)]
+
+
+def world_info(key):
+  for w in WORLDS:
+    if w[0] == key and w[3] is not None:
+      return w
+  return WORLDS[0]
+
+
+_WOK = {}
+
+
+def world_ok(key):
+  r = _WOK.get(key)
+  if r is None:
+    r = _WOK[key] = _world_ok(key)
+  return r
+
+
+def _world_ok(key):
+  w = world_info(key)
+  try:
+    for part in ('sky_day', 'sky_night', 'far', 'mid', 'ground'):
+      ART.img('%s_%s' % (w[2], part))
+    return True
+  except Exception:
+    return False
+
+
+def worlds_available():
+  return [w for w in WORLDS if w[3] is not None and world_ok(w[0])]
+
+
+def _tinted(name, night):
+  """a layer as-is for daytime, or darkened and cooled for night"""
+  def build():
+    s = ART.img(name).copy()
+    if night:
+      s.fill(NIGHT_TINT, special_flags=pygame.BLEND_RGB_MULT)
+    return s
+  return _cache(('lvlt', name, night), build)
+
+
+NIGHT_TINT = (92, 98, 140)
+
+
+def level_sky(world, night):
+  pre = world_info(world)[2]
+  def build():
+    s = pygame.transform.smoothscale(ART.img('%s_sky_%s' % (pre, 'night' if night else 'day')), (WIDTH, HEIGHT))
+    return s.convert()
+  return _cache(('lvlsky', pre, night, WIDTH), build)
+
+
+# rows from which each layer is solid all the way across (found when the art was packed)
+SOLID_ROWS = {'lvl_far': 106, 'lvl_mid': 80, 'lvl_ground': 33,
+              'desert_far': 190, 'desert_mid': 72, 'desert_ground': 43}
+_KEY = (255, 0, 255)
+
+
+def _fast(name, night):
+  """A layer split for speed: the ragged top as a colour-keyed strip (fast RLE blit, the art has no
+  soft edges) and the solid bottom as a plain opaque strip (a straight copy)."""
+  def build():
+    src = _tinted(name, night)
+    w, h = src.get_size()
+    cut = SOLID_ROWS.get(name, 0)
+    for m in ART_MODS:
+      cut = getattr(m, 'SOLID_ROWS', {}).get(name, cut)
+    cut = max(0, min(h, cut))
+    top = None
+    if cut > 0:
+      top = pygame.Surface((w, cut))
+      try:
+        top = top.convert()
+      except Exception:
+        pass
+      top.fill(_KEY)
+      top.blit(src, (0, 0), (0, 0, w, cut))
+      try:
+        top.set_colorkey(_KEY, pygame.RLEACCEL)
+      except Exception:
+        top.set_colorkey(_KEY)
+    bot = None
+    if cut < h:
+      bot = pygame.Surface((w, h - cut))
+      try:
+        bot = bot.convert()
+      except Exception:
+        pass
+      bot.blit(src, (0, 0), (0, cut, w, h - cut))
+    _C.pop(('lvlt', name, night), None)                # the full copy isn't needed any more
+    return (top, bot, cut, w)
+  return _cache(('lvlfast', name, night), build)
+
+
+def _blit_wrap(surf, img, y, x, w, rows=None):
+  if img is None:
+    return
+  o = int(x) % w
+  area = None if rows is None else pygame.Rect(0, 0, w, max(0, rows))
+  if rows is not None and rows <= 0:
+    return
+  if area is None:
+    surf.blit(img, (-o, y))
+    if w - o < WIDTH:
+      surf.blit(img, (-o + w, y))
+  else:
+    surf.blit(img, (-o, y), area)
+    if w - o < WIDTH:
+      surf.blit(img, (-o + w, y), area)
+
+
+def _layer(surf, name, y, x, night, clip_y=None):
+  top, bot, cut, w = _fast(name, night)
+  _blit_wrap(surf, top, y, x, w)
+  if bot is not None:
+    rows = None if clip_y is None else min(bot.get_height(), clip_y - (y + cut))
+    _blit_wrap(surf, bot, y + cut, x, w, rows)
+
+
+def sky_spans(world):
+  """screen rows where the sky shows through (everything else is covered by solid scenery)"""
+  def build():
+    key, _t, pre, mod, fy, my = world_info(world)
+    try:
+      ft, fb, fcut, _w = _fast(pre + '_far', False)
+      mt, mb, mcut, _w = _fast(pre + '_mid', False)
+      far_h = fcut + (fb.get_height() if fb is not None else 0)
+      spans = [(0, fy + fcut)]
+      if fy + far_h < my + mcut:                     # a strip between the far layer's bottom and the hills' solid part
+        spans.append((fy + far_h, my + mcut))
+      return [(max(0, a), min(HEIGHT, b)) for a, b in spans if b > a]
+    except Exception:
+      return [(0, HEIGHT)]
+  return _cache(('skyspans', world, HEIGHT), build)
+
+
+def solid_from(world):
+  return sky_spans(world)[0][1]
+
+
+def level_layers(surf, world, far_x, mid_x, night, between=None):
+  key, _t, pre, mod, fy, my = world_info(world)
+  mid_cut = _fast(pre + '_mid', night)[2]
+  gr_top = GROUND_Y - mod.GROUND_GRASS + _fast(pre + '_ground', night)[2]
+  _layer(surf, pre + '_far', fy, far_x, night, my + mid_cut)      # hidden below where the hills go solid
+  if between:
+    between()                                                    # (floating islands between the far and middle layers)
+  _layer(surf, pre + '_mid', my, mid_x, night, gr_top)            # and the hills below where the ground goes solid
+
+
+def level_ground(surf, world, x, night):
+  key, _t, pre, mod, fy, my = world_info(world)
+  _layer(surf, pre + '_ground', GROUND_Y - mod.GROUND_GRASS, x, night)
+
+
+_TINT_SPR = {}
+
+
+def night_sprite(spr):
+  """a darkened copy of a scenery sprite for night (made once per sprite)"""
+  k = id(spr)
+  e = _TINT_SPR.get(k)
+  if e is None or e[0] is not spr:
+    try:
+      e = _make_night(spr, k)
+    except Exception:
+      e = _TINT_SPR[k] = (spr, spr)                     # couldn't tint: draw it as it is
+  return e[1]
+
+
+def _make_night(spr, k):
+  if True:
+    if len(_TINT_SPR) > 600:
+      _TINT_SPR.clear()
+    d = None
+    ck = spr.get_colorkey()
+    if ck is not None:                                 # colour-keyed sprites: tinting would shift the key colour
+      try:
+        d = spr.convert_alpha()
+      except Exception:
+        d = None
+    if d is None:
+      d = spr.copy()
+      if ck is not None:
+        d.set_colorkey(None)
+        t = tuple(int(c * n / 255) for c, n in zip(ck[:3], NIGHT_TINT))
+        d.fill(NIGHT_TINT, special_flags=pygame.BLEND_RGB_MULT)
+        d.set_colorkey(t)
+        e = _TINT_SPR[k] = (spr, d)
+        return e
+    d.fill(NIGHT_TINT, special_flags=pygame.BLEND_RGB_MULT)
+    e = _TINT_SPR[k] = (spr, d)
+    return e
+
+
+class NightProxy(object):
+  """stands in for the screen while scenery is drawn at night: plain blits come out darkened"""
+  def __init__(self, surf):
+    self.surf = surf
+
+  def blit(self, src, pos, area=None, special_flags=0):
+    if special_flags:
+      return self.surf.blit(src, pos, area, special_flags)
+    return self.surf.blit(night_sprite(src), pos, area)
+
+  def __getattr__(self, n):
+    return getattr(self.surf, n)
+
+
+def world_card(world, w, h):
+  """a little picture of a world for the Worlds page"""
+  def build():
+    key, title, pre, mod, fy, my = world_info(world)
+    s = pygame.Surface((WIDTH, HEIGHT))
+    s.blit(level_sky(world, False), (0, 0))
+    level_layers(s, world, 0, 0, False)
+    level_ground(s, world, 0, False)
+    return pygame.transform.smoothscale(s, (w, h))
+  return _cache(('wcard', world, w, h), build)
 
 
 # ---------------------------------------------------------------- Aftermath report: the war tent
@@ -3072,3 +3354,96 @@ def tally(surf, x, y, n, col=(52, 30, 14)):
   for k in range(n % 5):
     pygame.draw.line(surf, col, (gx + k * 5, y - 8), (gx + k * 5 + 1, y + 8), 2)
   return gx + (n % 5) * 5 - x
+
+
+# ---------------------------------------------------------------- painted sun, moon and clouds
+try:
+  import fd_skyart as SKYA
+except Exception:
+  SKYA = None
+
+
+def _keyed(name):
+  """a hard-edged sky piece as a colour-keyed surface (much quicker to draw than per-pixel alpha)"""
+  def build():
+    src = SKYA.img(name)
+    w, h = src.get_size()
+    s = pygame.Surface((w, h))
+    try:
+      s = s.convert()
+    except Exception:
+      pass
+    s.fill(_KEY)
+    s.blit(src, (0, 0))
+    try:
+      s.set_colorkey(_KEY, pygame.RLEACCEL)
+    except Exception:
+      s.set_colorkey(_KEY)
+    return s
+  return _cache(('skyk', name), build)
+
+
+def _sky_set(kind):
+  def build():
+    out = []
+    i = 0
+    while SKYA is not None and SKYA.has('cloud_%s_%d' % (kind, i)):
+      out.append('cloud_%s_%d' % (kind, i))
+      i += 1
+    return out
+  return _cache(('skyset', kind), build)
+
+
+def sky_ok():
+  r = _C.get('sky_ok')
+  if r is None:
+    try:
+      SKYA.img('sky_sun'), SKYA.img('sky_moon')
+      r = bool(_sky_set('day')) and bool(_sky_set('storm')) and bool(_sky_set('night'))
+    except Exception:
+      r = False
+    _C['sky_ok'] = r
+  return r
+
+
+# worlds whose skies need different clouds or a tinted sun and moon: (cloud set, colour multiply)
+WORLD_SKY = {'volcano': ('storm', (255, 128, 96)),
+             'void': ('night', (150, 190, 255)),           # no fluffy clouds in space: thin cosmic wisps
+             'sandstorm': ('storm', (255, 196, 130))}   # the desert in a sandstorm: dust clouds
+
+
+def _sky_tinted(name, tint, keyed):
+  def build():
+    s = (_keyed(name) if keyed else SKYA.img(name)).copy()
+    ck = s.get_colorkey() if keyed else None
+    if ck is not None:
+      s.set_colorkey(None)
+    s.fill(tint, special_flags=pygame.BLEND_RGB_MULT)
+    if ck is not None:
+      t = tuple(int(c * n / 255) for c, n in zip(ck[:3], tint))
+      s.set_colorkey(t, pygame.RLEACCEL)
+    return s
+  return _cache(('skyt', name, tint, keyed), build)
+
+
+def sky_orb(night, world=None):
+  name = 'sky_moon' if night else 'sky_sun'
+  ws = WORLD_SKY.get(world)
+  if ws:
+    return _sky_tinted(name, ws[1], False)
+  return SKYA.img(name)
+
+
+def sky_cloud(idx, night, stormy, world=None):
+  """cloud number idx from the set that suits the world, time and weather"""
+  ws = WORLD_SKY.get(world)
+  if ws:
+    names = _sky_set(ws[0])
+    return _sky_tinted(names[idx % len(names)], ws[1], True)
+  if stormy:
+    names = _sky_set('storm')
+  elif night:
+    names = _sky_set('night')
+  else:
+    names = _sky_set('day') + _sky_set('small')
+  return _keyed(names[idx % len(names)])

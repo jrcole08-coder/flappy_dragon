@@ -3,7 +3,7 @@ Each data module (fd_magma / fd_ice / fd_unicorn) holds packed 168x128 frames pl
 import base64, zlib, math, importlib
 import pygame
 
-MODS = {'RED': 'fd_magma', 'BLUE': 'fd_ice', 'UNICORN': 'fd_unicorn', 'WRAITH': 'fd_wraith', 'CHINESE': 'fd_lung', 'CLOCKWORK': 'fd_clockwork', 'GREEN': 'fd_poison', 'YELLOW': 'fd_lightning', 'FOREST': 'fd_forest_dragon', 'SILVER': 'fd_wind', 'COCKATRICE': 'fd_cockatrice', 'WHALE': 'fd_whale', 'FEY': 'fd_fey', 'ALIEN': 'fd_alien', 'EAGLE': 'fd_eagle'}
+MODS = {'RED': 'fd_magma', 'BLUE': 'fd_ice', 'UNICORN': 'fd_unicorn', 'WRAITH': 'fd_wraith', 'CHINESE': 'fd_lung', 'CLOCKWORK': 'fd_clockwork', 'GREEN': 'fd_poison', 'YELLOW': 'fd_lightning', 'FOREST': 'fd_forest_dragon', 'SILVER': 'fd_wind', 'COCKATRICE': 'fd_cockatrice', 'WHALE': 'fd_whale', 'FEY': 'fd_fey', 'ALIEN': 'fd_alien', 'EAGLE': 'fd_eagle', 'RAVEN': 'fd_raven', 'PERYTON': 'fd_peryton'}
 W, H = 168, 128
 
 
@@ -48,8 +48,15 @@ class Sheet:
     """one frame every 2 game frames while flapping (wing grows 0.38 a frame), slower while gliding"""
     return int(wing / 0.76) % self.count('fly')
 
-  def breath_index(self):
-    return int(pygame.time.get_ticks() / 70) % self.count('breath')
+  def breath_index(self, t0=None):
+    """breath frames play from the start of the breath; sets with BREATH_LOOP = (a, b) play their lead-in once,
+    then loop frames a..b-1 (the Lung Dragon stays in its water form while it breathes)"""
+    now = pygame.time.get_ticks()
+    i = int((now - (t0 if t0 is not None else 0)) / 70)
+    lp = getattr(self.m, 'BREATH_LOOP', None)
+    if lp and t0 is not None and i >= lp[0]:
+      i = lp[0] + (i - lp[0]) % (lp[1] - lp[0])
+    return i % self.count('breath')
 
   def tip(self, i, tb=0, fly=False):
     """mouth (or horn) tip in the 168x128 frame for breath step i (or flight step i), following the tilt."""

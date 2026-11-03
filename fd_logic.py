@@ -8,7 +8,17 @@ from fd_jabber import jab_mouth, JAB, DEATH_BOTTOM as JAB_BOTTOM, SCALE as JAB_S
 from fd_hydra import hyd_mouths, DEATH_BOTTOM as HYD_BOTTOM, SCALE as HYD_SCALE
 from fd_beholder import beh_point, beam_line, STALKS as BEH_STALKS, LASER_ON as BEH_LASER_ON, BEAM_HALF as BEH_HALF, SCALE as BEH_SCALE, beh_count
 import fd_ui as UIX
+import fd_extras as FX
+import fd_modes as MODE
+import fd_ground as GATK
+import fd_foes2 as NF
+import fd_boss2 as NB
+import fd_perks as PERK
+import fd_achieve as ACH
+import fd_isles as ISL
 from fd_night import night_frame, night_count, night_muzzle, night_bottom
+from fd_witch import ws_frame, ws_count
+from fd_spider import sp_count, BOTTOM as SPIDER_BOTTOM, AY as SPIDER_AY, SCALE as SPIDER_SCALE
 import time
 from fd_core import *
 from fd_art import *
@@ -96,6 +106,8 @@ def vibrate(ms):
 class GameLogic:
   def __init__(self):
     self.data = load_data()
+    self.mode = 'adventure'                          # adventure / endless / obstacle / tutorial (see fd_modes)
+    apply_hand(self.data.get('lefty', False))
     for _bb in self.data.get('babies', []):
       self.pet_defaults(_bb)
     AUDIO.set_enabled(self.data.get('sound', True))
@@ -112,7 +124,7 @@ class GameLogic:
     self.egg_scroll, self.egg_drag, self.egg_idx = 0.0, None, 0
     self.hatching = None
     self.hb_scroll, self.hb_drag = 0.0, None
-    self.hb_view, self.den, self.den_sel, self.hb_idx, self.pet_react = 'den', {}, None, 0, 0
+    self.hb_view, self.den, self.den_sel, self.hb_idx, self.pet_react = 'list', {}, None, 0, 0
     self.egg_drop = None
     self.confirm_menu = False
     self.opt_from = "MENU"
@@ -167,6 +179,7 @@ class GameLogic:
     self.dash_state = 'idle'
     self.dash_cd = 0
     self.dash_inv = 0
+    self.phase_a, self._phasing, self._sh0 = 0.0, False, False
     self.dash_boss = False
     self.run_coins = 0.0
     self.breath = False
@@ -176,31 +189,87 @@ class GameLogic:
     self.tick = True
     self.threat = 1
     self.boss = None
-    self.b1 = self.b2 = self.b3 = self.b4 = self.b5 = self.b6 = False
+    self.b1 = self.b2 = self.b3 = self.b4 = self.b5 = self.b6 = self.b7 = self.b8 = self.b9 = False
     self.talon, self.talon_q, self.talon_home = None, 0, False   # griffin, phoenix, jabberwock, demon, hydra, beholder
     self.heart_drop, self.heart_delay = None, 0
     self.init_weather()
     self.day = (random.random() < 0.45 or not self.data.get('weather', True)) and ensure_day_assets()
-    for n in GROUND_LISTS + ('enemies', 'fireballs', 'arrows', 'orbs', 'spears', 'scenery', 'particles', 'powerups', 'coins', 'bolts', 'globs', 'lava', 'rubble', 'tornados', 'corpses', 'holes', 'fog', 'wisps', 'bones', 'souls', 'missiles', 'booms', 'vines', 'leaves', 'eggs_shot', 'chicks', 'novas', 'butterflies'):
+    for n in GROUND_LISTS + ('enemies', 'fireballs', 'arrows', 'orbs', 'spears', 'scenery', 'particles', 'powerups', 'coins', 'bolts', 'globs', 'lava', 'rubble', 'tornados', 'corpses', 'holes', 'fog', 'wisps', 'bones', 'souls', 'missiles', 'booms', 'vines', 'leaves', 'eggs_shot', 'chicks', 'novas', 'butterflies', 'gfx'):
       setattr(self, n, [])
     self.spawn_t = self.scenery_t = self.power_t = 0
     self.dead = False
     self.death = None
     self.prefill_scenery()
-    if self.data.get('fullscreen', True):
+    if self.data.get('fullscreen', True) and not getattr(self, 'fullscreen', False):
       self.set_fullscreen(True, quiet=True)
 
-  def init_weather(self):
-    k = random.choices(WEATHER_KINDS, WEATHER_WEIGHTS)[0]
-    if not self.data.get('weather', True):
-      k = "clear"
-    self.wx_kind, self.wx_t, self.gust = k, 0, 0.0
+  # weather each world can have (others get every kind); swaps fix things like rain in the frozen north
+  WORLD_WEATHER = {'volcano': ("clear", "wind", "fog"),       # ash winds and smoke, never rain or snow
+                   'void': ("clear",),                        # no weather in outer space
+                   'desert': ("clear", "wind", "fog", "sand")}
+  WORLD_WEATHER_SWAP = {'frozen': {'rain': 'snow', 'storm': 'snow'}}
+
+  def weather_choices(self):
+    """the weather kinds this world can have (not counting clear skies), with their weights"""
+    w = self.data.get('world', 'kingdom')
+    allowed = self.WORLD_WEATHER.get(w)
+    sw = self.WORLD_WEATHER_SWAP.get(w, {})
+    out = {}
+    for k, wt in zip(WEATHER_KINDS, WEATHER_WEIGHTS):
+      if k != "clear" and (allowed is None or k in allowed) and w in WEATHER_ONLY.get(k, (w,)):
+        k = sw.get(k, k)
+        out[k] = out.get(k, 0) + wt
+    return out
+
+  def set_weather(self, k, amt):
+    self.wx_kind, self.wx_t = k, 0
+    self.wx_amt = amt
+    self.gust = 0.0
     self.flash, self.bolt, self.bolt_t = 0, None, random.randint(90, 240)
-    n = {"rain": 70, "storm": 95, "snow": 55, "wind": 22}.get(k, 0)
+    n = {"rain": 70, "storm": 95, "snow": 55, "wind": 22, "sand": 220}.get(k, 0)
     self.wx_parts = [[random.uniform(0, WIDTH), random.uniform(0, HEIGHT), random.uniform(0.7, 1.3), random.uniform(0, 6.28)] for _ in range(n)]
+
+  def init_weather(self):
+    """the run starts with a random sky; after that the weather comes and goes (see weather_cycle)"""
+    ch = self.weather_choices()
+    k = "clear"
+    if self.data.get('weather', True) and ch and random.random() < 0.55:
+      k = random.choices(list(ch), list(ch.values()))[0]
+    self.set_weather(k, 1.0 if k != "clear" else 0.0)
+    self.wx_phase = 'on' if k != "clear" else 'off'
+    self.wx_left = random.randint(900, 1800) if k != "clear" else random.randint(360, 900)
+    self.wx_last = k
+
+  def weather_cycle(self):
+    """rain starts, then stops; a gale blows up, then dies down; a sandstorm rolls in, then clears...
+    each spell builds up, lasts 15-30 seconds, fades away, and the sky stays clear for a while before the next"""
+    if not self.data.get('weather', True) or self.state != "PLAYING" or getattr(self, 'mode', '') == 'tutorial':
+      return
+    ch = self.weather_choices()
+    if not ch:
+      return
+    ph = getattr(self, 'wx_phase', 'off')
+    if ph == 'on':
+      self.wx_amt = min(1.0, getattr(self, 'wx_amt', 1.0) + 1 / 180.0)       # builds up over 3 seconds
+      self.wx_left -= 1
+      if self.wx_left <= 0:
+        self.wx_phase = 'fade'
+    elif ph == 'fade':
+      self.wx_amt -= 1 / 240.0                                               # dies away over 4 seconds
+      if self.wx_amt <= 0:
+        self.set_weather("clear", 0.0)
+        self.wx_phase, self.wx_left = 'off', random.randint(480, 1100)
+    else:
+      self.wx_left = getattr(self, 'wx_left', 600) - 1
+      if self.wx_left <= 0:
+        opts = {k: v for k, v in ch.items() if k != getattr(self, 'wx_last', None)} or ch   # something different from last time
+        k = random.choices(list(opts), list(opts.values()))[0]
+        self.set_weather(k, 0.0)
+        self.wx_phase, self.wx_left, self.wx_last = 'on', random.randint(900, 1800), k
 
   def update_weather(self):
     try:
+      self.weather_cycle()
       self._update_weather()
     except Exception:
       self.wx_kind = "clear"
@@ -208,12 +277,14 @@ class GameLogic:
   def _update_weather(self):
     k = self.wx_kind
     if k == "clear":
+      self.gust = 0.0
       return
+    amt = getattr(self, 'wx_amt', 1.0)
     self.wx_t += 1
     wind = 0.0
-    if k in ("wind", "storm"):
-      wind = math.sin(self.wx_t * 0.02) * math.sin(self.wx_t * 0.013)
-    self.gust = wind * (0.13 if k == "wind" else 0.05)
+    if k in ("wind", "storm", "sand"):
+      wind = math.sin(self.wx_t * 0.02) * math.sin(self.wx_t * 0.013) * amt
+    self.gust = wind * {"wind": 0.13, "sand": 0.10}.get(k, 0.05)
     for p in self.wx_parts:
       if k in ("rain", "storm"):
         p[1] += 22 * p[2]
@@ -224,8 +295,11 @@ class GameLogic:
       elif k == "wind":
         p[0] -= 26 * p[2]
         p[1] += math.sin(self.wx_t * 0.05 + p[3]) * 0.6
+      elif k == "sand":                                  # grains streaking sideways, swirling up and down
+        p[0] -= (18 + abs(wind) * 14) * p[2]
+        p[1] += math.sin(self.wx_t * 0.07 + p[3]) * 1.4 + 0.3
       if p[1] > HEIGHT or p[0] < -60 or p[0] > WIDTH + 20:
-        if k == "wind":
+        if k in ("wind", "sand"):
           p[0], p[1] = WIDTH + random.uniform(0, 80), random.uniform(0, GROUND_Y)
         else:
           p[0], p[1] = random.uniform(0, WIDTH + 40), -random.uniform(0, 30)
@@ -233,7 +307,9 @@ class GameLogic:
       if self.flash > 0:
         self.flash -= 1
       self.bolt_t -= 1
-      if self.bolt_t <= 0:
+      if self.bolt_t <= 0 and amt < 0.6:
+        self.bolt_t = 60
+      elif self.bolt_t <= 0:
         self.bolt_t = random.randint(150, 420)
         self.flash = 7
         AUDIO.play('thunder')
@@ -256,27 +332,45 @@ class GameLogic:
     k = self.wx_kind
     if k == "clear":
       return
+    amt = max(0.0, min(1.0, getattr(self, 'wx_amt', 1.0)))   # how far it has built up (or died down)
+    if amt <= 0.01:
+      return
+    def sc(c):
+      return tuple(int(v * amt) for v in c)
+    parts = self.wx_parts[:int(len(self.wx_parts) * amt)]
     if k == "storm":
-      gs.fill((46, 46, 34), special_flags=pygame.BLEND_RGB_SUB)
+      gs.fill(sc((46, 46, 34)), special_flags=pygame.BLEND_RGB_SUB)
     elif k == "rain":
-      gs.fill((24, 24, 18), special_flags=pygame.BLEND_RGB_SUB)
+      gs.fill(sc((24, 24, 18)), special_flags=pygame.BLEND_RGB_SUB)
     elif k == "fog":
-      gs.fill((56, 62, 74), special_flags=pygame.BLEND_RGB_ADD)
-      for i in range(6 if WISP else 0):
+      gs.fill(sc((56, 62, 74)), special_flags=pygame.BLEND_RGB_ADD)
+      for i in range(int(6 * amt + 0.5) if WISP else 0):
         gs.blit(WISP, (int((self.wx_t * (0.5 + i * 0.12) + i * 190) % (WIDTH + 260)) - 240, 40 + i * 70))
     elif k == "snow":
-      gs.fill((14, 16, 24), special_flags=pygame.BLEND_RGB_ADD)
+      gs.fill(sc((14, 16, 24)), special_flags=pygame.BLEND_RGB_ADD)
+    elif k == "sand":                                    # dusty orange haze that thickens with the gusts
+      a = int(abs(self.gust) * 300)
+      m = (255, 212 - a // 3, 150 - a // 2)
+      gs.fill(tuple(int(255 - (255 - v) * amt) for v in m), special_flags=pygame.BLEND_RGB_MULT)
+      gs.fill(sc((70 + a // 2, 46 + a // 3, 12)), special_flags=pygame.BLEND_RGB_ADD)
+      for i in range(int(4 * amt + 0.5) if WISP else 0):  # rolling dust clouds
+        gs.blit(WISP, (int(WIDTH + 260 - (self.wx_t * (3.5 + i * 0.9) + i * 330) % (WIDTH + 520)) - 260, 70 + i * 120))
     if k in ("rain", "storm"):
-      for p in self.wx_parts:
+      for p in parts:
         x, y = int(p[0]), int(p[1])
         pygame.draw.line(gs, (150, 170, 205), (x, y), (x - 3, y + 11), 1)
     elif k == "snow":
-      for p in self.wx_parts:
+      for p in parts:
         pygame.draw.circle(gs, (240, 245, 255), (int(p[0]), int(p[1])), 2 if p[2] > 1.0 else 1)
     elif k == "wind":
-      for p in self.wx_parts:
+      for p in parts:
         x, y = int(p[0]), int(p[1])
         pygame.draw.line(gs, (170, 180, 195), (x, y), (x + int(34 * p[2]), y + 1), 1)
+    elif k == "sand":
+      for p in parts:
+        x, y = int(p[0]), int(p[1])
+        c = (240, 196, 128) if p[2] > 1.0 else (200, 150, 86)
+        pygame.draw.line(gs, c, (x, y), (x + int(26 * p[2]), y + 1), 2 if p[2] > 1.05 else 1)
     if k == "storm" and self.flash > 0:
       if self.bolt:
         pygame.draw.lines(gs, (190, 200, 255), False, self.bolt, 6)
@@ -285,10 +379,11 @@ class GameLogic:
       gs.fill((c, c, c), special_flags=pygame.BLEND_RGB_ADD)
     if self.state == "PLAYING" and k in WEATHER_NAMES and self.wx_t < 200:
       col = (255, 255, 255) if self.wx_t < 150 else (190, 190, 200)
-      blit_text(gs, small_font, "Weather: " + WEATHER_NAMES[k], col, (WIDTH // 2, 82), "center")
+      wy = 178 if self.boss is not None else 82          # below the boss's name and health bar during a fight
+      blit_text(gs, small_font, "Weather: " + WEATHER_NAMES[k], col, (WIDTH // 2, wy), "center")
 
   def egg_stacks(self):
-    """eggs of the same rarity share one card: [(egg, [indices]), ...] rarest first"""
+    """eggs of the same rarity share one card: [(egg, [indices]), ...] common first, legendary last"""
     groups, order = {}, []
     for i, egg in enumerate(self.data['eggs']):
       k = egg['r']
@@ -296,7 +391,7 @@ class GameLogic:
         groups[k] = []
         order.append(k)
       groups[k].append(i)
-    order.sort(key=lambda k: -RARITY_ORDER.index(k) if k in RARITY_ORDER else 0)
+    order.sort(key=lambda k: RARITY_ORDER.index(k) if k in RARITY_ORDER else len(RARITY_ORDER))
     return [(self.data['eggs'][groups[k][0]], groups[k]) for k in order]
 
   def pick_quest(self, avoid=()):
@@ -339,7 +434,21 @@ class GameLogic:
     self.roll_quest()
     self.confirm_menu = False
     self.intro_t = 0
+    self.ult, self.ult_fx, self.heal_kills = 0, None, 0
+    if PERK.perk(self) == 'heart':                   # level 15 Fey: an extra heart
+      self.hearts += 1
     self.state = "INTRO"
+    AUDIO.preload(self.world(), 'boss', 'boss_final')   # decode this world's song and the boss music ahead of time
+    self.pillars, self.pillar_dist, self.pillars_passed = [], 0.0, 0
+    self.pillars_moving_told = False
+    self.tl = None
+    if self.mode == 'tutorial':
+      FX.tutorial_start(self)
+      self.tut = None                                # (the first-run hints are skipped: this is the full lesson)
+      MODE.tutorial_begin(self)
+    else:
+      FX.tutorial_start(self)
+    self.combo, self.combo_t, self.floats, self.flash_t, self.freeze = 0, 0, [], 0, 0
 
   def new_ember(self, anywhere=False):
     return [random.uniform(0, WIDTH), random.uniform(0, HEIGHT) if anywhere else HEIGHT + 5, random.uniform(0.4, 1.4), random.randint(2, 5), random.uniform(0, 6.28)]
@@ -360,25 +469,37 @@ class GameLogic:
   def compute_params(self):
     up, sel = self.data['upgrades'], self.selected
     self.threat = 1 + self.score // 300
-    self.scroll = BASE_SCROLL * 0.2 if self.boss else BASE_SCROLL + self.threat * 0.4
+    t = self.threat                                 # speeds up quickly to the first boss, then only gently (and tops out)
+    ramp = min(t, 6) * 0.4 + max(0, t - 6) * SCROLL_LATE
+    self.scroll = BASE_SCROLL * 0.2 if self.boss else min(SCROLL_MAX, BASE_SCROLL + ramp)
     self.scroll *= getattr(self, 'glide_mult', 1.0)
     self.scroll_px = max(2, int(math.ceil(self.scroll)))
     self.gravity = 0.40 if sel == "BLUE" else BASE_GRAVITY
     self.breath_time = (380 if sel == "RED" else 240) + up['deep_lungs'] * 60
     self.score_mult = 1
     self.coin_val = 1.5 if sel == "CHINESE" else 1.0
+    pk = PERK.perk(self)                            # level 10 / 15 rewards
+    if PERK.has_special(self):
+      self.breath_time = int(self.breath_time * 1.25)
+    if pk == 'coins':
+      self.coin_val *= 2
     self.ts = 0.5 if (sel == "CHRONO" and self.breath) else 1.0
     self.slow_acc = getattr(self, 'slow_acc', 0.0) + self.ts
     self.tick = self.slow_acc >= 1.0
     if self.tick:
       self.slow_acc -= 1.0
     self.max_shields = 3 + up['thick_scales']
-    self.magnet = 50 + up['coin_magnet'] * 60
+    self.magnet = (50 + up['coin_magnet'] * 60) * (2 if pk == 'magnet' else 1)
 
   def bounty_add(self, kind, key=None, n=1):
-    q = self.bounty
+    q = self.bounty if getattr(self, 'mode', 'adventure') in ('adventure', 'endless') else None
     if q and q['type'] == kind and not q.get('done') and q.get('foe') in (None, key) and q.get('dragon') in (None, self.selected):
       q['progress'] += n
+    if kind == 'shatter' and self.state == "PLAYING":
+      PERK.on_kill(self)                             # level perks and the Ultimate's charge
+    if kind == 'shatter' and self.state == "PLAYING":   # every foe destroyed keeps the combo going
+      d = self.dragon
+      FX.combo_hit(self, d.right + 60, d.top - 10, 10)
 
   def kill_key(self, name, o):
     if name == 'enemies':
@@ -388,6 +509,9 @@ class GameLogic:
     return KILL_KEY.get(name, name)
 
   def note_boss(self, btype):
+    if PERK.perk(self) == 'bossshield' and self.shields < self.max_shields:   # level 15 Cosmic: a free shield
+      self.shields += 1
+      self.toast("+1 SHIELD!")
     self.heart_delay = 100                          # a heart power-up floats in a moment after every boss
     rs = getattr(self, 'run_stats', None)
     if rs is not None:
@@ -427,8 +551,20 @@ class GameLogic:
       return True
     return False
 
+  GREEN_SCENERY = ("oak", "pine", "birch", "bush", "grass", "flowers", "fg_hill", "pgrass", "mushroom", "pbush", "twig", "fence")
+
+  FOLK_SCENERY = ('villager', 'smith', 'peasant', 'knight', 'dwarf', 'sheep', 'deer', 'bonfire')
+  MAX_FOLK = 5
+
   def spawn_scenery(self, x):
     t = random.choices(SCENERY_TYPES, SCENERY_WEIGHTS)[0]
+    if self.data.get('world', 'kingdom') != 'kingdom' and t in self.GREEN_SCENERY:
+      return                                  # other worlds have no green trees and grass: leave a gap instead of
+                                              # rolling again (re-rolling packed the ground with villagers)
+    if t in self.FOLK_SCENERY:
+      folk = sum(1 for q in self.scenery if q['type'] in self.FOLK_SCENERY)
+      if folk >= self.MAX_FOLK:
+        return                                # enough people and animals on screen already
     if t == "grass":
       t = "grass%d" % random.randint(0, 2)
     elif t == "flowers":
@@ -481,12 +617,21 @@ class GameLogic:
           self.handle_event(e)
         self.mouse = self.map_pos(pygame.mouse.get_pos())
         self.update()
+        owe = getattr(self, '_owe', 0.0)
+        if owe >= 1.0 and self.state == "PLAYING":       # a slow phone skips drawing a frame rather than running in slow motion
+          for _ in range(min(2, int(owe))):
+            if self.state != "PLAYING":
+              break
+            self.update()
+            owe -= 1.0
+          self._owe = owe
         self.draw()
       except SystemExit:
         raise
       except Exception:
         self.report_crash()
-      clock.tick(FPS)
+      ms = clock.tick(FPS)
+      self._owe = min(2.5, max(-1.0, getattr(self, '_owe', 0.0) + ms * FPS / 1000.0 - 1.0))
 
   def report_crash(self):
     """An error no longer freezes the game: it is written to fd_error_log.txt and shown on screen."""
@@ -519,6 +664,8 @@ class GameLogic:
     sys.exit()
 
   def handle_event(self, e):
+    if FX.handle_app_event(self, e):                # the app was hidden or came back: pause and save
+      return
     st = self.state
     if (e.type == pygame.MOUSEBUTTONUP and e.button == 1) or (e.type == pygame.KEYUP and e.key in (pygame.K_SPACE, pygame.K_UP, pygame.K_w)):
       self.hold = False
@@ -541,9 +688,22 @@ class GameLogic:
           self.tab_action(k)
       return
 
+    if st == "MODES":
+      if (click and BACK_BTN.collidepoint(pos)) or key == pygame.K_ESCAPE:
+        self.state = "MENU"
+      elif key in (pygame.K_RETURN, pygame.K_SPACE):
+        self.start_run()
+      elif click:
+        for m, r in MODE.mode_rects(WIDTH):
+          if r.collidepoint(pos):
+            AUDIO.play('click')
+            self.mode = m[0]
+            self.start_run()
+            break
+      return
     if st == "MENU":
       if key in (pygame.K_RETURN, pygame.K_SPACE):
-        self.start_run()
+        self.state = "MODES"
       if click:
         for k, r in MENU_RECTS.items():
           if r.collidepoint(pos):
@@ -558,6 +718,10 @@ class GameLogic:
         AUDIO.play('click')                     # lets you hear the new sound-effect level
       elif (click and BACK_BTN.collidepoint(pos)) or key == pygame.K_ESCAPE:
         self.state = self.opt_from
+      elif click and self.opt_from != "PAUSED" and SAVE_BTNS['backup'].collidepoint(pos):
+        self.backup_save()
+      elif click and self.opt_from != "PAUSED" and SAVE_BTNS['restore'].collidepoint(pos):
+        self.restore_save()
       elif click:
         for k, r in OPT_RECTS.items():
           if k in ("weather", "difficulty") and self.opt_from == "PAUSED":
@@ -573,14 +737,38 @@ class GameLogic:
         self.data['music_vol'] = max(0, min(100, self.data.get('music_vol', 100) + (5 if key == pygame.K_RIGHT else -5)))
         self.apply_volumes()
     elif st in ("LAIR", "WORLDS"):
-      if (click and BACK_BTN.collidepoint(pos)) or key == pygame.K_ESCAPE:
-        self.state = "MENU"
+      if (click and st == "LAIR" and BACK_BTN.collidepoint(pos)) or key == pygame.K_ESCAPE:
+        self.state = "MENU" if st == "LAIR" else "LAIR"   # the Realm page is in the Lair now
+      elif click and st == "WORLDS":
+        for k, _t, r in self.world_rects():
+          if r.inflate(14, 14).collidepoint(pos):
+            AUDIO.play('click')
+            self.data['world'] = k
+            self.scenery = []
+            self.prefill_scenery()
+            save_data(self.data)
+            self.toast("Now flying in %s" % _t)
       elif click and st == "LAIR":
         for k, r in LAIR_RECTS.items():
           if r.collidepoint(pos):
             self.menu_action(k)
+    elif st == "ACHIEVE":                            # the achievements pages
+      if (click and ACH.nav_rects(WIDTH)[1].collidepoint(pos)) or key == pygame.K_ESCAPE:
+        AUDIO.play('click')
+        self.state = "QUESTS"
+      elif (click and ACH.nav_rects(WIDTH)[0].collidepoint(pos)) or key in (pygame.K_LEFT, pygame.K_a):
+        AUDIO.play('click')
+        self.ach_page = (getattr(self, 'ach_page', 0) - 1) % ACH.page_count()
+      elif (click and ACH.nav_rects(WIDTH)[2].collidepoint(pos)) or key in (pygame.K_RIGHT, pygame.K_d):
+        AUDIO.play('click')
+        self.ach_page = (getattr(self, 'ach_page', 0) + 1) % ACH.page_count()
     elif st in ("QUESTS", "HOARD"):
-      if (click and BACK_BTN.collidepoint(pos)) or key == pygame.K_ESCAPE:
+      if st == "QUESTS" and click and ACH_BTN.collidepoint(pos):
+        AUDIO.play('click')
+        ACH.check(self)
+        save_data(self.data)
+        self.state = "ACHIEVE"
+      elif (click and BACK_BTN.collidepoint(pos)) or key == pygame.K_ESCAPE:
         self.state = "LAIR"
       elif click and st == "HOARD":
         for k, _t, _d, rect in UPGRADES:
@@ -696,34 +884,25 @@ class GameLogic:
       babies = self.data.get('babies', [])
       if click and EGG_BACK_BTN.collidepoint(pos) or key == pygame.K_ESCAPE:
         self.state = "LAIR"
-      elif click and HB_VIEW_BTN.collidepoint(pos):
-        self.hb_view = 'list' if self.hb_view == 'den' else 'den'
-        AUDIO.play('click')
-      elif self.hb_view == 'den':
-        if click and self.den_sel is not None and HB_DETAIL_BTN.collidepoint(pos):
-          for k, bb in enumerate(babies):
-            if bb.get('id') == self.den_sel:
-              self.hb_idx = k
-              self.pet_react = 0
-              self.state = "HATCH_INFO"
-          AUDIO.play('click')
-        elif click and DEN_RECT.collidepoint(pos):
-          best, bd = None, 70.0
-          for bid, dv in self.den.items():
-            dd = math.hypot(dv[0] - pos[0], dv[1] - pos[1])
-            if dd < bd:
-              best, bd = bid, dd
-          self.den_sel = best
-          if best is not None:
-            self.den[best][4] = 45
-            self.den[best][3] = -6.0
-            AUDIO.play('coin', 0.5)
       else:
         g = EGG_GRID
         cw, ch, gap, pitch = EGG_CARD
         rows = (len(babies) + 3) // 4
         max_s = max(0, rows * pitch - (pitch - ch) - g.h)
-        if click and g.collidepoint(pos):
+        def bar_to(y):                               # the scroll bar: the thumb follows your finger
+          tr = HB_SCROLL
+          full = tr.h + max_s
+          th = max(44, int(tr.h * tr.h / float(full)))
+          f = (y - tr.top - th / 2.0) / float(max(1, tr.h - th))
+          self.hb_scroll = max(0.0, min(max_s, f * max_s))
+        if click and max_s > 0 and HB_SCROLL.inflate(30, 10).collidepoint(pos):
+          self.hb_bar = True
+          bar_to(pos[1])
+        elif e.type == pygame.MOUSEMOTION and getattr(self, 'hb_bar', False):
+          bar_to(pos[1])
+        elif e.type == pygame.MOUSEBUTTONUP and getattr(self, 'hb_bar', False):
+          self.hb_bar = False
+        elif click and g.collidepoint(pos):
           self.hb_drag = [pos[1], self.hb_scroll, pos, False]
         elif e.type == pygame.MOUSEMOTION and self.hb_drag:
           dy = pos[1] - self.hb_drag[0]
@@ -754,14 +933,9 @@ class GameLogic:
       if (click and PET_BTNS[0].collidepoint(pos)) or key == pygame.K_ESCAPE:
         self.state = "HATCHLINGS"
       elif click and PET_BTNS[1].collidepoint(pos):
-        k = (BABY_NAMES.index(bb['name']) + 1) % len(BABY_NAMES) if bb['name'] in BABY_NAMES else 0
-        bb['name'] = BABY_NAMES[k]
-        save_data(self.data)
-        AUDIO.play('click')
-      elif click and PET_BTNS[2].collidepoint(pos):
         self.pet_feed(bb)
         self.pet_react = 50
-      elif click and PET_BTNS[3].collidepoint(pos):
+      elif click and PET_BTNS[2].collidepoint(pos):
         self.data['companion'] = None if self.data.get('companion') == bb['id'] else bb['id']
         save_data(self.data)
         AUDIO.play('click')
@@ -852,11 +1026,16 @@ class GameLogic:
           self.pending = None
       elif (click and INFO_BACK.collidepoint(pos)) or key == pygame.K_ESCAPE:
         self.pending = None
+        self.info_page = 'stats'
         self.state = self.info_from
+      elif click and INFO_LEVELS.collidepoint(pos):     # flip between the stats and the level rewards
+        AUDIO.play('click')
+        self.info_page = 'levels' if getattr(self, 'info_page', 'stats') == 'stats' else 'stats'
       elif (click and INFO_SELECT.collidepoint(pos)) or key in (pygame.K_RETURN, pygame.K_SPACE):
         if k in self.data['unlocked']:
           self.selected = k
           AUDIO.play('click')
+          self.info_page = 'stats'
           self.state = self.info_from
         elif self.data['coins'] >= DRAGON_PALETTES[k]['cost']:
           self.pending = k
@@ -873,6 +1052,8 @@ class GameLogic:
           self.use_shield()
         elif DASH_BTN.collidepoint(pos):
           self.try_dash()
+        elif ULT_BTN.collidepoint(pos) and PERK.has_ult(self):
+          PERK.ultimate(self)
         else:
           self.flap()
           self.hold, self.hold_t = True, 0
@@ -885,6 +1066,8 @@ class GameLogic:
         self.use_shield()
       elif key in (pygame.K_d, pygame.K_RIGHT, pygame.K_LSHIFT, pygame.K_RSHIFT):
         self.try_dash()
+      elif key == pygame.K_u:
+        PERK.ultimate(self)
     elif st == "PAUSED":
       if click:
         if not self.confirm_menu:
@@ -907,6 +1090,9 @@ class GameLogic:
       dd = getattr(self, 'death', None)
       if (click or key in (pygame.K_SPACE, pygame.K_RETURN)) and dd and not dd.done and dd.t > 30:
         dd.t = max(dd.t, 140)                     # tap to hurry the ashes along
+      elif (click and self.over_t > 25 and RETRY_BTN.collidepoint(pos)) or (key == pygame.K_r and self.over_t > 25):
+        AUDIO.play('click')
+        self.start_run()                              # straight back in: same dragon, same mode
       elif click and self.over_t > 25 and REPORT_BTN.collidepoint(pos):
         AUDIO.play('click')
         self.state = "REPORT"
@@ -952,6 +1138,42 @@ class GameLogic:
     AUDIO.set_music(d['music'])
     AUDIO.set_sfx(d['sfx'])
 
+  def backup_save(self):
+    """copies the whole save to the clipboard as a code (paste it into a note or a message to keep it safe)"""
+    AUDIO.play('click')
+    save_data(self.data)
+    code = FX.export_code(self.data)
+    self.backup_code = code
+    if FX.clipboard_put(code):
+      self.toast("Save code copied! Paste it somewhere safe")
+    else:
+      self.toast("Couldn't reach the clipboard on this device")
+
+  def restore_save(self):
+    """loads a save from a backup code on the clipboard (tap twice to confirm)"""
+    AUDIO.play('click')
+    code = FX.clipboard_get()
+    data = FX.import_code(code) if code else None
+    if data is None:
+      self.toast("Copy your save code first, then tap Restore")
+      self.restore_armed = 0
+      return
+    if getattr(self, 'restore_armed', 0) <= 0:
+      self.restore_armed = 240
+      self.toast("Tap RESTORE again to replace this save")
+      return
+    self.restore_armed = 0
+    keep = {k: self.data.get(k) for k in ('music', 'sfx', 'music_vol', 'sfx_vol', 'fullscreen')}
+    self.data.clear()
+    self.data.update(data)
+    self.data.update({k: v for k, v in keep.items() if v is not None})
+    save_data(self.data)
+    self.data = load_data()
+    apply_hand(self.data.get('lefty', False))
+    if self.selected not in self.data['unlocked']:
+      self.selected = self.data['unlocked'][0]
+    self.toast("Save restored!")
+
   def option_action(self, k):
     AUDIO.play('click')
     d = self.data
@@ -976,6 +1198,9 @@ class GameLogic:
       d['vibrate'] = not d.get('vibrate', True)
       if d['vibrate']:
         self.buzz(60)
+    elif k == "hand":
+      d['lefty'] = not d.get('lefty', False)
+      apply_hand(d['lefty'])
     elif k == "weather":
       d['weather'] = not d.get('weather', True)
       if not d['weather']:
@@ -995,7 +1220,10 @@ class GameLogic:
   def flap(self):
     if self.dash_state == 'out':
       return
-    if self.selected == "EAGLE" and self.breath and self.state == "PLAYING":   # Talon Strike: every tap dives at the nearest foe
+    if self.mode == 'tutorial' and self.state == "PLAYING":
+      MODE.tutorial_flap(self)
+    if self.selected in TALON_DRAGONS and self.breath and self.state == "PLAYING":
+      self.talon_extra = PERK.perk(self) == 'talon2'   # level 15: each tap strikes one extra foe   # Talon Strike: every tap dives at the nearest foe
       self.talon_tap()
       return
     self.vel = FLAP_STRENGTH
@@ -1015,6 +1243,14 @@ class GameLogic:
       self.flap_left = 0.0
       return
     left = getattr(self, 'flap_left', 0.0)
+    if getattr(self, 'gliding', False) and left <= 0:   # holding a glide: slow, lazy wing beats
+      self.flap_ph = getattr(self, 'flap_ph', rest) + ln / GLIDE_BEAT
+      self._glide_beat = True
+      return
+    if getattr(self, '_glide_beat', False):      # glide over: finish the beat and settle on the usual pose
+      self._glide_beat = False
+      self.flap_left = (ln - ((self.flap_ph - rest) % ln)) % ln
+      left = self.flap_left
     if left > 0:
       st = min(left, ln / 22.0)                   # a beat lasts about a third of a second
       self.flap_ph = getattr(self, 'flap_ph', rest) + st
@@ -1035,7 +1271,7 @@ class GameLogic:
   def menu_action(self, k):
     AUDIO.play('click')
     if k == "play":
-      self.start_run()
+      self.state = "MODES"                           # pick Adventure, Endless, Obstacle Course or Tutorial
     elif k == "hatchlings":
       self.state = "HATCHLINGS"
       self.hb_scroll, self.hb_drag = 0.0, None
@@ -1049,6 +1285,8 @@ class GameLogic:
       self.state = "LAIR"
     elif k == "worlds":
       self.state = "WORLDS"
+    elif k == "hearths":                             # the hatching hearths (straight from the Lair)
+      self.state = "ROOSTS"
     elif k == "roster":
       self.state = "SELECT"
     elif k == "hoard":
@@ -1083,6 +1321,7 @@ class GameLogic:
 
   def set_fullscreen(self, on, quiet=False):
     """Try a few fullscreen methods (phones are picky) and check which one really worked."""
+    self.bg_grace_until = pygame.time.get_ticks() + 1500   # the window change sends "minimised/hidden" events: ignore them
     self.view = (1.0, 0, 0)
     self.view_sy = 1.0
     self.scale_buf = None
@@ -1177,7 +1416,7 @@ class GameLogic:
   def update_dash(self):
     d = self.dragon
     if self.dash_cd > 0:
-      self.dash_cd -= 1
+      self.dash_cd -= 2 if PERK.perk(self) == 'dash' else 1
     st = self.dash_state
     if st == 'idle':
       return
@@ -1238,6 +1477,7 @@ class GameLogic:
         self.burst(d.right + 20, d.centery, 20, 6, 4, 10, (255, 90, 70))
       b['hp'] -= 30
       b['flash'] = 10
+      FX.boss_hit_fx(self, True)
       self.burst(d.right + 20, d.centery, 30, 7, 6, 14, (255, 220, 120))
       self.dash_state = 'back'
       self.dash_inv = 45
@@ -1245,23 +1485,44 @@ class GameLogic:
       AUDIO.play('shatter', 0.8)
       self.shake_for(6, 8)
 
+  def music_track(self):
+    """which song fits right now: Dragon's Hearth in the menus and the Kingdom, each world its own theme, boss music in a fight"""
+    st = self.state
+    if st not in ("PLAYING", "PAUSED", "INTRO", "GAMEOVER") and not (st == "OPTIONS" and self.opt_from == "PAUSED"):
+      w = self.world()                                # every menu page plays the theme of the world you have picked
+      return 'theme' if w == 'kingdom' else w
+    b = getattr(self, 'boss', None)
+    if b is not None and b.get('state') in ('entering', 'fighting') and st != "GAMEOVER":
+      return 'boss_final' if b.get('type') == 'hydra' else 'boss'
+    w = self.world()
+    return 'theme' if w == 'kingdom' else w
+
   def update(self):
     st = self.state
     self.update_hatching()
     self._ntick = getattr(self, '_ntick', 0) + 1
     if self._ntick % 60 == 0 and st != "ROOSTS":
       self.check_egg_notify()
-    if self.state == "HATCHLINGS":
-      self.update_den()
+    if self._ntick % 90 == 0 and st not in ("PLAYING", "INTRO", "PAUSED") and ACH.check(self):   # e.g. a hatch or a purchase
+      save_data(self.data)
     if self.pet_react > 0:
       self.pet_react -= 1
     AUDIO.set_muffled(self.state == "PAUSED" or (self.state == "OPTIONS" and self.opt_from == "PAUSED"))
+    AUDIO.set_track(self.music_track())
     AUDIO.tick()
+    if getattr(self, 'restore_armed', 0) > 0:
+      self.restore_armed -= 1
     if st != "PLAYING":
       AUDIO.set_loop('breath', None)
       AUDIO.set_loop('weather', None)
     if st == "PAUSED":
       return
+    if getattr(self, 'freeze', 0) > 0:               # a split-second hit freeze when a boss takes a big blow
+      self.freeze -= 1
+      return
+    FX.juice_update(self)
+    if st == "PLAYING":
+      FX.tutorial_update(self)
     self.anim += 0.05
     if self.shake_t > 0:
       self.shake_t -= 1
@@ -1270,9 +1531,10 @@ class GameLogic:
     self.far_x += self.scroll * 0.1 if playing else 0.05
     self.near_x += self.scroll * 0.2 if playing else 0.10
     self.mid_x += self.scroll * 0.4 if playing else 0.2
+    self.ground_x = getattr(self, 'ground_x', 0.0) + (self.scroll if playing else 0.5)
     for c in self.clouds:
       c[0] -= c[3] if playing else c[3] * 0.2
-      if c[0] < -220:
+      if c[0] < -300:
         c[0], c[1], c[2] = WIDTH + 50, random.randint(20, 220), random.randint(0, 99)
     for m in self.mist:
       m[0] -= m[2] * self.scroll * 0.1 if playing else 0.5
@@ -1337,7 +1599,7 @@ class GameLogic:
     self.menu_dragon_x += 2.2
     if self.menu_dragon_x > WIDTH + 140:
       self.menu_dragon_x = -140.0
-    if int(self.anim * 20) % 2 == 0:
+    if int(self.anim * 20) % 2 == 0 and False:       # (the menu dragon was removed, so no trail either)
       tr = DRAGON_PALETTES[self.selected]['trail']
       my = 320 + math.sin(self.anim * 1.3) * 45
       if self.selected == "COSMIC":
@@ -1379,14 +1641,25 @@ class GameLogic:
       if not self.gliding:
         self.gliding = True
         self.glide_y0, self.glide_f0 = float(d.y), float(fy)
-      self.glide_y0 += GLIDE_SINK
+        self.glide_e = max(0.0, -self.vel) * GLIDE_CARRY   # a little lift carried in from the last flap
+        self.glide_sink = GLIDE_SINK
+      self.glide_sink = min(GLIDE_SINK_MAX, self.glide_sink + GLIDE_SINK_GROW)   # the longer you hold, the faster you sink
+      self.glide_y0 += self.glide_sink
       want = self.glide_y0 + (fy - self.glide_f0)
       lo, hi = 50.0, float(GROUND_Y - 70)
       if want < lo or want > hi:                       # finger ran past the limit: re-anchor so it responds at once
         want = max(lo, min(hi, want))
         self.glide_y0, self.glide_f0 = want, float(fy)
+      if want < d.y - self.glide_e:                    # can't climb higher than the speed you have saved up
+        want = d.y - self.glide_e
+        self.glide_y0 = want - (fy - self.glide_f0)    # (re-anchor so sliding back down responds at once)
       goal = max(-GLIDE_UP, min(GLIDE_DOWN, (want - d.y) * 0.22))
       self.vel = self.vel * 0.6 + goal * 0.4 + self.gust * 0.3
+      if self.vel > 0:
+        self.glide_e += self.vel * GLIDE_KEEP          # diving builds speed for a swoop (but only part of the drop)
+      elif self.vel < 0:
+        self.glide_e = max(0.0, self.glide_e + self.vel)   # swooping up spends it
+      self.glide_e *= GLIDE_FADE
       self.track_circle(fy)
     else:
       self.gliding = False
@@ -1441,15 +1714,16 @@ class GameLogic:
     self.compute_params()
     sc = self.scroll_px
     self.update_glide(d)
+    self.update_phase(sel, d)
     self.update_weather()
-    AUDIO.set_loop('weather', WEATHER_LOOP.get(self.wx_kind))
+    AUDIO.set_loop('weather', WEATHER_LOOP.get(self.wx_kind) if getattr(self, 'wx_amt', 1.0) > 0.3 else None)
     AUDIO.set_loop('breath', BREATH_LOOP.get(sel, 'fire') if self.breath else None)
     d.y += int(self.vel)
     rs = getattr(self, 'run_stats', None)
     if rs is not None:
       rs['dist'] += sc
       rs['ticks'] += 1
-      q = self.bounty
+      q = self.bounty if self.mode in ('adventure', 'endless') else None
       if q and not q.get('done') and q['type'] in ('distance', 'score'):
         q['progress'] = max(q['progress'], int(rs['dist'] / PX_PER_M) if q['type'] == 'distance' else int(self.score))
     self.update_dash()
@@ -1468,7 +1742,7 @@ class GameLogic:
     self.dead = False
     self.bolts = []
 
-    if not self.boss and not self.towers:
+    if not self.boss and not self.towers and self.mode == 'adventure':   # (no bosses in the other modes)
       if self.score >= BOSS_SCORES[0] and not self.b1:
         self.boss = {'type': 'griffin', 'x': WIDTH + 100.0, 'y': HEIGHT // 2, 'hp': 150.0, 'max_hp': 150.0, 'timer': 0.0, 'state': 'entering', 'atk': 'idle', 'at': 0, 'cool': 80, 'seq': 0, 'waves': []}
         AUDIO.play('roar')
@@ -1489,8 +1763,17 @@ class GameLogic:
       elif self.score >= BOSS_SCORES[4] and not self.b4:
         self.boss = {'type': 'demon', 'x': WIDTH + 150.0, 'y': HEIGHT // 2 - 60.0, 'hp': 640.0, 'max_hp': 640.0, 'timer': 0.0, 'state': 'entering', 'atk': 'idle', 'at': 0, 'cool': 60, 'sh': 0, 'fwaves': [], 'by': HEIGHT // 2 - 60.0, 'ghost': False, 'hurt': 0, 'flash': 0, 'dt': 0, 'seq': 0, 'alpha': 255}
         AUDIO.play('roar')
-      elif self.score >= BOSS_SCORES[5] and not self.b5 and self.b4:
-        self.boss = {'type': 'hydra', 'x': WIDTH + 170.0, 'y': HEIGHT // 2 - 110.0, 'by': HEIGHT // 2 - 110.0, 'hp': 760.0, 'max_hp': 760.0, 'timer': 0.0,
+      elif self.score >= BOSS_SCORES[6] and not self.b7 and self.b4:
+        self.boss = NB.make('sphinx', WIDTH, HEIGHT)
+        AUDIO.play('roar')
+      elif self.score >= BOSS_SCORES[7] and not self.b8 and self.b7:
+        self.boss = NB.make('manticore', WIDTH, HEIGHT)
+        AUDIO.play('roar')
+      elif self.score >= BOSS_SCORES[8] and not self.b9 and self.b8:
+        self.boss = NB.make('mothman', WIDTH, HEIGHT)
+        AUDIO.play('roar')
+      elif self.score >= BOSS_SCORES[5] and not self.b5 and self.b9:
+        self.boss = {'type': 'hydra', 'x': WIDTH + 200.0, 'y': HEIGHT // 2 - 105.0, 'by': HEIGHT // 2 - 105.0, 'hp': 760.0, 'max_hp': 760.0, 'timer': 0.0,
                      'state': 'entering', 'atk': 'idle', 'at': 0, 'cool': 60, 'seq': 0, 'fi': 0, 'anim': 'fly', 'flash': 0, 'hurt': 0, 'dt': 0, 'alpha': 255,
                      'ghost': False}
         AUDIO.play('roar')
@@ -1523,7 +1806,7 @@ class GameLogic:
         pass                                   # chain lightning is built in update_breath
       else:
         cols = BREATH_COLORS.get(sel, DEFAULT_BREATH)
-        for _ in range(0 if sel in ("RED", "BLUE", "GREEN", "SILVER", "COSMIC", "SKELETAL", "UNICORN", "WRAITH", "CHINESE", "CLOCKWORK", "FOREST", "COCKATRICE", "WHALE", "FEY", "ALIEN", "EAGLE") else 4):
+        for _ in range(0 if sel in ("RED", "BLUE", "GREEN", "SILVER", "COSMIC", "SKELETAL", "UNICORN", "WRAITH", "CLOCKWORK", "FOREST", "COCKATRICE", "WHALE", "FEY", "ALIEN", "EAGLE", "RAVEN", "PERYTON") else 4):
           if sel == "SILVER":
             self.emit(hx, hy + random.randint(-20, 20), random.uniform(15, 25), random.uniform(-1, 1), random.randint(8, 14), random.choice(cols))
           else:
@@ -1562,15 +1845,24 @@ class GameLogic:
       else:
         self.emit(d.x + 4, d.centery + 4 + int(self.pitch * 0.3), random.uniform(-3.5, -1), random.uniform(-1, 1), random.randint(6, 11), tr[0] if random.random() > 0.4 else tr[1])
 
-    if not self.boss:
+    fights = self.mode in ('adventure', 'endless')
+    if not self.boss and fights:
       self.spawn_t += 1
       if self.spawn_t > max(35, 75 - self.threat * 5):
         self.spawn_t = 0
         self.spawn_enemy()
+    if self.mode == 'obstacle':
+      MODE.obstacle_update(self, d, WIDTH, GROUND_Y)
+    elif self.mode == 'tutorial':
+      MODE.tutorial_update(self)
+      if self.tl and self.tl['finished'] > 240:      # lessons done: back to the Play menu
+        save_data(self.data)
+        self.state = "MODES"
+        return
     self.power_t += 1
-    if self.power_t > 340:
+    if self.power_t > 340 and fights:
       self.power_t = 0
-      self.powerups.append({'rect': pygame.Rect(WIDTH, random.randint(120, 380), 34, 34), 't': 0.0, 'ry': 0})
+      self.powerups.append({'rect': pygame.Rect(WIDTH, random.randint(120, 380), 39, 39), 't': 0.0, 'ry': 0})   # (15% bigger)
     if random.random() < 0.02 and not self.boss:
       self.coins.append({'rect': pygame.Rect(WIDTH, random.randint(100, 400), 20, 20), 't': random.uniform(0, 5), 'ry': 0})
 
@@ -1590,6 +1882,13 @@ class GameLogic:
     self.update_heart_drop()
 
     self.update_tornados()
+    PERK.update(self)
+    if PERK.perk(self) == 'charge':                  # level 15: shield charge fills 50% faster
+      inc = self.dp - getattr(self, '_dp_prev', self.dp)
+      if inc > 0:
+        self.dp += inc * 0.5
+    self._dp_prev = self.dp
+    GATK.update(self)                              # level-5 ground attacks (frost, lightning, meteors...)
     self.update_egg_drop()
     self.update_pet()
     if sel in ("RED", "GREEN", "ALIEN"):
@@ -1600,8 +1899,14 @@ class GameLogic:
       for o in getattr(self, name):
         r, ost = o['rect'], o['state']
         if ost == 'blown':
-          r.x += 15
-          r.y -= 2
+          bv = o.get('blow_v')
+          if bv:
+            bv[1] += 0.25                              # tumbling up and away in an arc
+            r.x += int(bv[0])
+            r.y += int(bv[1])
+          else:
+            r.x += 15
+            r.y -= 2
         else:
           r.x -= sc
         if ost == 'stasis':
@@ -1623,8 +1928,14 @@ class GameLogic:
     for e in self.enemies:
       r, ost = e['rect'], e['state']
       if ost == 'blown':
-        e['fx'] += 15
-        r.y -= 2
+        bv = e.get('blow_v')
+        if bv:
+          bv[1] += 0.25
+          e['fx'] += bv[0]
+          r.y += int(bv[1])
+        else:
+          e['fx'] += 15
+          r.y -= 2
       elif ost == 'spun':
         pass
       elif ost in STUCK_STATES:
@@ -1642,6 +1953,13 @@ class GameLogic:
           e['state'] = 'normal'
       elif e.get('drain'):                             # held fast by the Soul Siphon
         e['fx'] -= 0.6 * self.ts
+      elif e.get('isle'):                               # Sky Islands: a floating island drifting across
+        ISL.ai(self, e)
+      elif e.get('nf'):                                 # the new foes (banshee, vulture, scarab, snakes, djinn, wyvern)
+        if not e.get('curse'):
+          NF.ai(self, e)
+        else:
+          e['fx'] -= 1.0 * self.ts
       elif e.get('foe') == 'witch' and not e.get('curse'):
         self.witch_ai(e)
       elif e.get('foe') in ('moth', 'bat'):
@@ -1771,7 +2089,10 @@ class GameLogic:
           self.emit(p['x'], p['y'], random.uniform(1, 3), random.uniform(-1, 2), random.randint(6, 12), (240, random.randint(60, 130), 10))
         pr = pygame.Rect(int(p['x'] - 11), int(p['y'] - 11), 22, 22) if is_fire else (pygame.Rect(int(p['x'] - 9), int(p['y'] - 5), 18, 10) if p.get('kind') in ('feather', 'icicle', 'icicle_fall') else (pygame.Rect(int(p['x'] - 17), int(p['y'] - 17), 34, 34) if p.get('kind') == 'boulder' else (pygame.Rect(int(p['x'] - 24), int(p['y'] - 12), 48, 24) if p.get('kind') == 'log' else pygame.Rect(int(p['x'] - 15), int(p['y'] - 2), 30, 4))))
         if d.colliderect(pr) and ost == 'normal':
-          if is_fire and sel == "RED":
+          if not is_fire and PERK.perk(self) == 'scales':   # level 15 Arctic Dragon: it bounces off
+            p['shattered'] = True
+            self.burst(p['x'], p['y'], 6, 3, 2, 6, (210, 240, 255))
+          elif is_fire and sel == "RED":
             p['shattered'] = True
             self.score += 5
             self.emit(p['x'], p['y'], random.uniform(-3, 3), random.uniform(-3, 3), random.randint(8, 15), FIRE_CORE)
@@ -1785,11 +2106,14 @@ class GameLogic:
 
     if self.hit_inv > 0:
       self.hit_inv -= 1
+    if self._phasing:                               # Wraith special: ethereal, nothing touches it (and its shield is kept)
+      self.dead = False
+      self.shield_active = self.shield_active or self._sh0
     if self.dash_inv > 0 or self.hit_inv > 0:
       self.dead = False
     elif self.dead and self.hearts > 0:
       self.take_heart()
-    for name in ('archers', 'mages', 'enemies', 'cyclopes', 'golems'):   # killed enemies play their death animation
+    for name in ('archers', 'mages', 'enemies', 'cyclopes', 'golems', 'catapults', 'trebuchets', 'ballistas'):   # killed enemies play their death animation
       for o in getattr(self, name):
         if o.get('shattered') and not o.get('corpse') and not o.get('swallowed') and o.get('state') != 'frozen' and o['rect'].right > 0:
           o['corpse'] = True
@@ -1800,6 +2124,12 @@ class GameLogic:
         self.score += 15 * self.score_mult
       if o.get('shattered') and not o.get('crumbled'):
         self.crumble_fx(o)
+    for name in GROUND_LISTS + ('enemies',):          # blown right off the map: defeated (no body left behind)
+      for o in getattr(self, name):
+        if o.get('state') == 'blown' and o.get('blow_v') and not o.get('shattered'):
+          r = o['rect']
+          if r.left > WIDTH + 20 or r.bottom < -30:
+            o['shattered'] = o['corpse'] = o['crumbled'] = True
     rs = getattr(self, 'run_stats', None)
     for name in GROUND_LISTS + ('enemies',):          # tally every foe defeated this run (for quests and the aftermath report)
       for o in getattr(self, name):
@@ -1833,7 +2163,24 @@ class GameLogic:
         self.shields += 1
       self.shake_for(5, 15)
 
-    if d.top < -25 or d.bottom > GROUND_Y + 1:
+    striking = sel in TALON_DRAGONS and (getattr(self, 'talon', None) or getattr(self, 'talon_home', False))
+    if striking:                                     # Talon Strike: the edges and the ground can't hurt it
+      if d.bottom > GROUND_Y + 1:
+        d.bottom = GROUND_Y + 1
+      if d.top < -25:
+        d.top = -25
+      d.x = max(-60, min(WIDTH + 60, d.x))           # (may reach a little past the edge to hit a boss)
+      self.dead = False
+    if self.mode == 'tutorial':                      # no harm in the tutorial: bounce off the ground and the sky
+      if d.bottom > GROUND_Y + 1:
+        d.bottom = GROUND_Y - 6
+        self.vel = FLAP_STRENGTH
+        self.start_flap()
+      if d.top < -25:
+        d.top = -25
+        self.vel = 0
+      self.dead = False
+    elif not striking and (d.top < -25 or d.bottom > GROUND_Y + 1):
       if not self.shield_active:
         if self.hearts > 0:
           if self.hit_inv <= 0:
@@ -1860,6 +2207,22 @@ class GameLogic:
     if self.dead:
       self.die()
 
+  def update_phase(self, sel, d):
+    """the Wraith Wyrm phases out of the world while its special is active: it fades into a ghost and can't be hit"""
+    ph = sel == "WRAITH" and bool(self.breath)
+    p = getattr(self, 'phase_a', 0.0)
+    if ph and p <= 0.0:                             # phasing out: a cold flash and a ring of spirit light
+      self.burst(d.centerx, d.centery, 22, 5, 4, 10, (170, 240, 255))
+      AUDIO.play('whoosh', 0.7)
+    elif not ph and p >= 1.0:                       # solid again
+      self.burst(d.centerx, d.centery, 12, 3, 3, 8, (120, 200, 230))
+    self.phase_a = min(1.0, p + 0.12) if ph else max(0.0, p - 0.07)
+    if self.phase_a > 0.3 and self.tick and random.random() < 0.6:   # ghostly wisps peel away behind it
+      self.emit(d.x + random.randint(0, d.w), d.y + random.randint(0, d.h), random.uniform(-3.0, -1.0), random.uniform(-1.2, 0.6),
+                random.randint(5, 10), random.choice(((150, 235, 255), (90, 190, 230), (210, 250, 255))))
+    self._phasing = ph
+    self._sh0 = self.shield_active
+
   def buzz(self, ms):
     if self.data.get('vibrate', True):
       vibrate(ms)
@@ -1870,7 +2233,7 @@ class GameLogic:
     if getattr(self, 'run_stats', None) is not None:
       self.run_stats['hearts_lost'] += 1
     self.dead = False
-    self.hit_inv = 100
+    self.hit_inv = 200 if PERK.perk(self) == 'ghost' else 100
     d = self.dragon
     self.burst(d.centerx, d.centery, 22, 6, 6, 12, (255, 60, 70))
     self.shake_for(8, 12)
@@ -1883,12 +2246,18 @@ class GameLogic:
     AUDIO.play('die')
     self.state = "GAMEOVER"
     self.over_t = 0
+    if self.mode != 'tutorial':
+      ACH.record_run(self)                           # lifetime numbers for the achievements
+    self.dragon_gain_xp()
     self.pet_gain_xp()
     data = self.data
     data['coins'] += int(self.run_coins)
-    self.new_record = self.score > data['high_score']
+    rk = MODE.RECORD_KEY.get(self.mode) or 'high_score'   # every mode keeps its own record
+    val = self.pillars_passed if self.mode == 'obstacle' else self.score
+    self.new_record = self.mode != 'tutorial' and val > data.get(rk, 0)
     if self.new_record:
-      data['high_score'] = self.score
+      data[rk] = val
+    ACH.check(self)
     save_data(data)
     d = self.dragon
     self.burst(d.centerx, d.centery, 14, 5, 5, 10, FIRE_CORE)
@@ -1903,6 +2272,9 @@ class GameLogic:
       elif self.selected == "SKELETAL":
         from fd_death import BoneDeath
         self.death = BoneDeath(d.x - PX.OX, d.y - PX.OY, GROUND_Y)
+      elif self.selected == "COSMIC":
+        from fd_death import CosmicDeath
+        self.death = CosmicDeath(d.x - PX.OX, d.y - PX.OY, GROUND_Y)
       else:
         spr = dragon_sprite(self.selected, PX.frame_index(self.flap_ph), 0, False)
         self.death = DragonDeath(spr, self.selected, d.center, (PX.OX + 32, PX.OY + 19), GROUND_Y)
@@ -1912,7 +2284,7 @@ class GameLogic:
   # ------------------------------------------------------------------ hatchlings (companions)
   def pet_defaults(self, bb):
     bb.setdefault('type', OLD_BABY_TYPE.get(bb.get('r'), 'GREEN'))
-    bb.setdefault('name', random.choice(BABY_NAMES))
+    bb['name'] = baby_name(bb['type'])
     bb.setdefault('xp', 0)
     bb.setdefault('level', 1)
     bb.setdefault('happy', 70.0)
@@ -1952,6 +2324,47 @@ class GameLogic:
     save_data(self.data)
     AUDIO.play('coin')
     self.toast("%s loved that! Happiness %d%%" % (bb['name'], int(bb['happy'])))
+
+  # ------------------------------------------------------------------ dragon levels
+  def dragon_lv(self, key=None):
+    """(level, xp toward the next level) of a dragon"""
+    e = self.data.setdefault('dlv', {}).get(key or self.selected)
+    return (e[0], e[1]) if e else (1, 0)
+
+  def ground_ok(self, key=None):
+    return self.dragon_lv(key)[0] >= GROUND_LEVEL
+
+  def dragon_cap(self):
+    """level cap for all dragons: 10, plus one for every baby you have raised to Adult"""
+    adults = sum(1 for bb in self.data.get('babies', []) if bb.get('level', 1) >= PET_MAX_LEVEL)
+    return min(DRAGON_LEVEL_CAP, DRAGON_MAX_LEVEL + adults)
+
+  def pet_share(self, base):
+    """XP your companion baby passes on to your dragon (doubled if it is the same kind)"""
+    bb = getattr(self, 'pet', None)
+    if not bb:
+      return 0, False
+    match = bb.get('type') == self.selected
+    return int(base * PET_XP_SHARE * (PET_MATCH_BONUS if match else 1.0)), match
+
+  def dragon_gain_xp(self):
+    """the dragon you flew earns XP for the run (score, bosses beaten), plus a share from its baby companion"""
+    key = self.selected
+    lv, xp = self.dragon_lv(key)
+    base = max(5, int(self.score) // 20) + getattr(self, 'run_bosses', 0) * 60
+    share, match = self.pet_share(base)
+    gain = base + share
+    self.xp_gain, self.xp_share, self.xp_match, self.level_up = gain, share, match, 0
+    cap = self.dragon_cap()
+    if lv < cap:
+      xp += gain
+      while lv < cap and xp >= dragon_need(lv):
+        xp -= dragon_need(lv)
+        lv += 1
+        self.level_up = lv
+      if lv >= cap:
+        xp = 0
+    self.data.setdefault('dlv', {})[key] = [lv, xp]
 
   def pet_gain_xp(self):
     bb = getattr(self, 'pet', None)
@@ -2123,8 +2536,8 @@ class GameLogic:
       roosts = self.data['roosts']
       slot = roosts[h['slot']]
       if slot:
-        name = random.choice(BABY_NAMES)
         typ = h.get('type', 'GREEN')
+        name = baby_name(typ)
         bb = self.pet_defaults({'id': slot.get('id', 0), 'r': slot['r'], 'type': typ, 'name': name, 'born': time.time(), 'happy': 80.0})
         self.data.setdefault('babies', []).append(bb)
         if self.data.get('companion') is None:
@@ -2133,7 +2546,7 @@ class GameLogic:
         roosts[h['slot']] = None
         save_data(self.data)
         AUDIO.play('coin')
-        self.toast("%s the %s hatchling has hatched!" % (name, DRAGON_PALETTES[typ]['title'].split()[0]))
+        self.toast("%s has hatched!" % name)
       self.hatching = None
 
   def drop_egg(self, btype, x, y):
@@ -2260,9 +2673,17 @@ class GameLogic:
       pool += ["swarm"]
     if self.threat >= 4:
       pool += ["swarm"]
+    pool += NF.pool_for(self)                        # banshees, vultures, scarabs, snakes, djinn, wyverns
+    pool += ISL.pool_for(self)                       # floating islands in the Sky Islands
     t = random.choice(pool)
+    if t == "isle":
+      ISL.spawn(self)
+      return
+    if t.startswith("nf:"):
+      NF.spawn(self, t[3:])
+      return
     if t == "swarm":
-      n = random.randint(3, 5)
+      n = random.randint(2, 4)
       base = random.randint(130, GROUND_Y - 170)
       spd = 7 + self.threat * 0.3
       variant = random.randint(0, 1)
@@ -2274,7 +2695,7 @@ class GameLogic:
                                      'speed': spd, 'passed': False, 'state': 'normal', 'vy': 0.0, 'phase': i * 0.7, 'by': float(by), 'wph': i * 0.5, 'age': 0.0})
       return
     if t == "spiders":
-      n = random.randint(3, 5)
+      n = random.randint(2, 4)
       vx = -(3.0 + self.threat * 0.12)
       vy = 1.9 + self.threat * 0.06
       x0 = WIDTH - random.randint(80, 260)
@@ -2321,7 +2742,7 @@ class GameLogic:
       foe = random.choice(('harpy', 'harpy', 'garg', 'imp', 'imp'))
       fw, fh = {'harpy': (40, 60), 'garg': (56, 56), 'imp': (36, 33)}[foe]
       if foe == 'imp':
-        n = random.randint(3, 5)
+        n = random.randint(2, 4)
         base = random.randint(110, GROUND_Y - 170)
         spd = random.randint(6, 8) + self.threat * 0.4
         for i in range(n):
@@ -2368,7 +2789,7 @@ class GameLogic:
           AUDIO.play('launch')
           self.burst(r.centerx, r.top + 10, 6, 3, 4, 8, STONE_LIGHT)
       else:
-        o['swing'] = min(o.get('swing', 0) + 1, 10)
+        o['swing'] = min(o.get('swing', 0) + 1, 10 if cat else 24)
     elif name == 'golems':
       if o['wind'] > 0:
         o['wind'] -= 1
@@ -2445,11 +2866,13 @@ class GameLogic:
         o['atk'] = 1
         self.burst(sx, sy, 8, 2, 3, 6, (200, 80, 230))
         AUDIO.play('whoosh')
+    elif name == 'ballistas' and o['mode'] == 'fired':
+      o['ft'] = o.get('ft', 0) + 1
     elif name == 'ballistas' and o['mode'] == 'aiming':
       o['timer'] -= 1
       if o['timer'] <= 0:
         o['mode'] = 'fired'
-        hx, hy = float(r.x - 18), float(r.y - 11)
+        hx, hy = float(r.x - 17), float(r.y - 5)                # the tip of the bolt in your ballista art
         dx, dy = d.centerx - hx, d.centery - hy
         ang = math.atan2(dy, -dx) if dx < 0 else 0.0
         ang = max(-0.7, min(0.2, ang))
@@ -2518,7 +2941,7 @@ class GameLogic:
     return pts
 
   def update_lava(self, hx, hy):
-    if self.breath and random.random() < 0.12 and len(self.globs) < 8:
+    if self.breath and self.ground_ok() and random.random() < 0.12 and len(self.globs) < 8:   # (lava / acid pools from level 5)
       self.globs.append([float(hx), float(hy), random.uniform(5, 10), random.uniform(-3, 0)])
     keep = []
     for g in self.globs:
@@ -2588,7 +3011,7 @@ class GameLogic:
         self.bolts.append((self.zig(p[0], p[1], p[0] + random.randint(40, 100), p[1] + random.randint(-45, 45), 3, 12), fork_col, 4))
       return
     chain, last, seen = [best], best, {id(best[0])}
-    for _ in range(CHAIN_JUMPS):
+    for _ in range(CHAIN_JUMPS + (1 if PERK.perk(self) == 'chain' else 0)):
       nxt, nd = None, CHAIN_RANGE
       for c in cands:
         if id(c[0]) in seen:
@@ -2653,6 +3076,27 @@ class GameLogic:
     for _ in range(14):
       self.emit(r.x + random.randint(0, r.w), GROUND_Y - random.randint(0, 20), random.uniform(-2, 2), random.uniform(-2, -0.5), random.randint(10, 18), random.choice(((150, 140, 130), (120, 112, 104), (180, 172, 160))))
 
+  def break_apart(self, spr, x0, y0, step=14, power=1.0):
+    """cut a sprite into small pieces that tumble apart and fall (stone golems, siege engines)"""
+    sw, sh = spr.get_size()
+    for cy in range(0, sh, step):
+      for cx in range(0, sw, step):
+        piece = spr.subsurface((cx, cy, min(step, sw - cx), min(step, sh - cy))).copy()
+        ck = spr.get_colorkey() if hasattr(spr, 'get_colorkey') else None
+        if ck is not None:                              # keep the see-through background (and make it real alpha for rotating)
+          piece.set_colorkey(ck)
+          try:
+            piece = piece.convert_alpha()
+          except Exception:
+            pass
+        try:
+          if piece.get_bounding_rect().w == 0:          # (skip empty corners of the frame)
+            continue
+        except Exception:
+          pass
+        self.rubble.append({'x': float(x0 + cx), 'y': float(y0 + cy), 'vx': random.uniform(-2.4, 2.4) * power, 'vy': random.uniform(-4.0, 0.0) * power,
+                            'rot': 0.0, 'vr': random.uniform(-16, 16), 'img': piece, 'delay': int((sh - cy) / float(sh) * 6), 'rots': {}})
+
   def make_corpse(self, name, o):
     r = o['rect']
     drop = GROUND_Y - r.bottom                      # how far above the ground it died
@@ -2661,15 +3105,60 @@ class GameLogic:
       src = extra_frame('golem', fi)
       spr = pygame.transform.scale(src, (int(src.get_width() * 1.21), int(src.get_height() * 1.21)))
       sw, sh = spr.get_size()
-      x0, y0 = r.centerx - sw // 2, r.bottom + 2 - sh
-      for cy in range(0, sh, 14):
-        for cx in range(0, sw, 14):
-          piece = spr.subsurface((cx, cy, min(14, sw - cx), min(14, sh - cy))).copy()
-          self.rubble.append({'x': float(x0 + cx), 'y': float(y0 + cy), 'vx': random.uniform(-2.4, 2.4), 'vy': random.uniform(-4.0, 0.0),
-                              'rot': 0.0, 'vr': random.uniform(-16, 16), 'img': piece, 'delay': int((sh - cy) / float(sh) * 6), 'rots': {}})
+      self.break_apart(spr, r.centerx - sw // 2, r.bottom + 2 - sh)
       for _ in range(16):
         self.emit(r.centerx + random.randint(-30, 30), r.bottom - random.randint(0, 40), random.uniform(-2, 2), random.uniform(-2.5, -0.5), random.randint(8, 15), random.choice(((150, 146, 140), (110, 106, 100), (180, 176, 168))))
       self.shake_for(6, 8)
+      return
+    if name == 'enemies' and o.get('isle'):          # floating islands crumble into tumbling chunks
+      ISL.corpse(self, o)
+      return
+    if name == 'enemies' and o.get('nf'):
+      NF.corpse(self, o)
+      return
+    if name in ('catapults', 'trebuchets', 'ballistas'):   # your siege art has its own wreck animations
+      from fd_newfoes import nf_count, nf_frame
+      art = {'catapults': 'catapult2', 'trebuchets': 'trebuchet2', 'ballistas': 'ballista2'}[name]
+      spr, ax, ay = nf_frame(art, 'death', 0)
+      self.corpses.append({'k': 'nf', 'art': art, 'x': float(r.centerx), 'y': float(r.bottom + 4 - spr.get_height() + ay), 't': 0, 'vy': 0.0,
+                           'floor': float(r.bottom + 4 - spr.get_height() + ay), 'n': nf_count(art, 'death'), 'rate': 3})
+      self.shake_for(3, 5)
+      return
+    if name in ('catapults', 'trebuchets', 'ballistas'):   # siege engines fly apart into tumbling planks
+      try:
+        from fd_siege import draw_catapult, draw_trebuchet, draw_ballista
+        if name == 'catapults':
+          ang, ld = siege_pose(o, 'cat')
+          spr, ox, oy = cached_sprite(("catapult", int(round(ang / 6.0)) * 6, ld), 120, 120, 30, 40,
+                                      lambda s_, x_, y_, qa=int(round(ang / 6.0)) * 6, ld=ld: draw_catapult(s_, x_, y_, qa, ld))
+        elif name == 'trebuchets':
+          ang, ld = siege_pose(o, 'treb')
+          spr, ox, oy = cached_sprite(("trebuchet", int(round(ang / 6.0)) * 6, ld), 160, 160, 45, 60,
+                                      lambda s_, x_, y_, qa=int(round(ang / 6.0)) * 6, ld=ld: draw_trebuchet(s_, x_, y_, qa, ld))
+        else:
+          m = o['mode']
+          spr, ox, oy = cached_sprite(("ballista", m), 100, 110, 30, 40, lambda s_, x_, y_, m=m: draw_ballista(s_, x_, y_, m))
+        # it shudders, buckles and leans over first, then bursts into tumbling planks (see update_corpses)
+        self.corpses.append({'k': 'siege', 'x': float(r.x - ox), 'y': float(r.y - oy), 't': 0, 'vy': 0.0, 'floor': float(r.y - oy),
+                             'n': 1, 'rate': SIEGE_BREAK, 'img': spr, 'lean': random.choice((-1, 1)), 'cx': float(r.centerx), 'cy': float(r.centery)})
+      except Exception:
+        pass
+      for _ in range(8):
+        self.emit(r.centerx + random.randint(-30, 30), r.centery + random.randint(-20, 20), random.uniform(-2.5, 2.5), random.uniform(-3, -0.5), random.randint(6, 12),
+                  random.choice((WOOD_BROWN, (120, 84, 50), (150, 146, 140))))
+      self.shake_for(3, 5)
+      return
+    if name == 'enemies' and o.get('foe') == 'witch':      # the witch plays her own death animation as she falls
+      w0 = ws_frame('w_death', 0, 1.3)
+      x, y = r.centerx - w0.get_width() // 2 + 4, r.bottom + 8 - w0.get_height()
+      self.burst(r.centerx, r.centery, 14, 4, 3, 8, (120, 255, 110))
+      self.corpses.append({'k': 'witch', 'x': float(x), 'y': float(y), 't': 0, 'vy': -1.0, 'floor': float(GROUND_Y + 6 - w0.get_height()),
+                           'n': ws_count('w_death'), 'rate': 5})
+      return
+    if name == 'enemies' and o.get('foe') == 'spider':     # the spider plays its own death animation as it drops
+      self.burst(r.centerx, r.centery, 10, 3, 3, 6, (120, 200, 90))
+      self.corpses.append({'k': 'spider', 'x': float(r.centerx), 'y': float(r.centery), 't': 0, 'vy': -2.0,
+                           'floor': float(GROUND_Y - int((SPIDER_BOTTOM - SPIDER_AY) * SPIDER_SCALE)), 'n': sp_count('death'), 'rate': 4})
       return
     if name == 'cyclopes':
       sc_ = 1.25
@@ -2703,6 +3192,19 @@ class GameLogic:
     for c in self.corpses:
       c['t'] += 1
       c['x'] -= sc
+      if c['k'] == 'siege':
+        c['cx'] -= sc
+        if c['t'] % 3 == 0:                          # smoke and sparks while it buckles
+          self.emit(c['cx'] + random.randint(-25, 25), c['cy'] + random.randint(-15, 10), random.uniform(-1, 1), random.uniform(-2.2, -0.6), random.randint(7, 13),
+                    random.choice(((90, 86, 80), (130, 124, 118), (255, 150, 40))))
+        if c['t'] == SIEGE_BREAK:                    # snaps apart: planks, a puff of smoke and a thump
+          self.break_apart(c['img'], int(c['x']), int(c['y']), 12, 1.5)
+          self.burst(c['cx'], c['cy'], 18, 5, 4, 10, (120, 84, 50))
+          self.burst(c['cx'], c['cy'] - 10, 12, 3, 3, 12, (150, 146, 140))
+          self.shake_for(5, 7)
+          AUDIO.play('shatter', 0.6)
+        if c['t'] >= SIEGE_BREAK:
+          continue
       if c['y'] < c['floor'] - 0.5:                 # anything that died up high falls to the ground
         c['vy'] += 0.55
         c['y'] = min(c['floor'], c['y'] + c['vy'])
@@ -2736,7 +3238,7 @@ class GameLogic:
     """Wind Dragon: while breathing, small tornados drop to the ground and race forward,
     spinning up anything they touch and flinging it away."""
     d = self.dragon
-    if self.selected == "SILVER" and self.breath:
+    if self.selected == "SILVER" and self.breath and self.ground_ok():   # (tornados from level 5)
       self.tornado_t = getattr(self, 'tornado_t', TORNADO_EVERY) + 1
       if self.tornado_t >= TORNADO_EVERY and len(self.tornados) < 3:
         self.tornado_t = 0
@@ -2965,7 +3467,10 @@ class GameLogic:
         d.x += (150 - d.x) * 0.12 if abs(d.x - 150) > 2 else (150 - d.x)
         if self.dash_inv > 0 and self.dash_state == 'idle':
           self.dash_inv -= 1
-        if d.x == 150:
+        if d.bottom > GROUND_Y - 60:                # lifts clear of the ground before it can be hurt again
+          d.y -= 4
+          self.vel = min(self.vel, 0.0)
+        if d.x == 150 and d.bottom <= GROUND_Y - 60 and d.top >= 0:
           self.talon_home = False
           if self.dash_state == 'idle':
             self.dash_inv = 0
@@ -2984,10 +3489,11 @@ class GameLogic:
     tx, ty = tr.centerx, tr.centery
     dx, dy = tx - d.centerx, ty - d.centery
     dist = math.hypot(dx, dy) or 1.0
-    spd = 34.0 + min(40.0, tl['t'] * 3.0)             # gets there fast, however far away it is
+    spd = (34.0 + min(40.0, tl['t'] * 3.0)) * TALON_SPEED   # gets there fast, however far away it is
     self.vel = 0.0
-    if dist <= spd + 14:
-      d.centerx, d.centery = int(tx), int(ty)
+    if dist <= spd + 14 or d.colliderect(tr.inflate(20, 20)):   # touching it counts (big bosses are wider than one step)
+      if dist <= spd + 14:
+        d.centerx, d.centery = int(tx), int(ty)
       self.talon_hit(name, o)
       return
     tl['dir'] = -1 if dx < -20 else 1               # which way it is diving (the art is mirrored for a dive to the left)
@@ -3000,9 +3506,10 @@ class GameLogic:
 
   def talon_hit(self, name, o):
     d = self.dragon
-    if name == 'boss':
+    if name == 'boss':                               # bosses shrug off most of a strike (about 15 strikes to fell the Griffin)
       if o.get('sh', 0) <= 0:
-        o['hp'] -= 45 * self.boss_mult(o)
+        o['hp'] -= o['max_hp'] * TALON_BOSS * self.boss_mult(o)
+        FX.boss_hit_fx(self, True)
       o['flash'] = 8
       self.burst(d.centerx, d.centery, 30, 7, 6, 14, (255, 220, 140))
     else:
@@ -3012,6 +3519,9 @@ class GameLogic:
       self.dp += pts
       self.bounty_add('shatter')
       cx, cy = o['rect'].center
+      if getattr(self, 'talon_extra', False):
+        self.talon_extra = False
+        self.talon_q = getattr(self, 'talon_q', 0) + 1
       self.burst(cx, cy, 24, 6, 6, 14, (255, 230, 170))
       self.burst(cx, cy, 14, 5, 4, 10, (190, 140, 50))
     AUDIO.play('shatter', 0.8)
@@ -3111,10 +3621,14 @@ class GameLogic:
         px, py = mx + math.cos(ang) * dist, my + math.sin(ang) * dist * 0.8
         self.emit(px, py, (mx - px) * 0.07, (my - py) * 0.07, random.randint(2, 5), random.choice(((255, 255, 255), (200, 180, 255), (140, 120, 255), (150, 255, 240))))
     b = self.boss_live()
+    self.maw_target = None
     if b and b.get('atk') != 'dive':
       br = self.boss_rect(b)
-      if inside(br.centerx, br.centery) and br.left - mx < R * 0.85 and b.get('sh', 0) <= 0:
-        b['hp'] -= 0.9 * self.boss_mult(b)
+      near = inside(br.centerx, br.centery) and br.left - mx < R * 0.85
+      far = br.centerx > mx and abs(br.centery - my) < 90 + br.h * 0.35   # lined up with the boss: the maw reaches it anywhere ahead
+      if (near or far) and b.get('sh', 0) <= 0:
+        self.maw_target = (br.centerx, br.centery)
+        b['hp'] -= (0.9 if near else 0.4) * self.boss_mult(b)
         b['hurt'] = b.get('hurt', 0) + 1
         if b['hurt'] % 14 == 1:
           b['flash'] = 3
@@ -3140,7 +3654,7 @@ class GameLogic:
     last = getattr(self, 'nova_idx', -1)
     self.nova_idx = idx
     self.nova_wait = getattr(self, 'nova_wait', 99) + 1
-    if (idx == 1 and last != 1 and self.nova_wait > 20) or self.nova_wait > 50:
+    if (idx == 1 and last != 1 and self.nova_wait > 12) or self.nova_wait > NOVA['every']:   # a steady stream of rings
       self.nova_wait = 0
       d = self.dragon
       self.novas.append({'r': 20.0, 'hit': set(), 'boss': False, 't': 0, 'ox': 32, 'oy': 21})
@@ -3155,7 +3669,7 @@ class GameLogic:
     b = self.boss_live()
     for nv in getattr(self, 'novas', ()):
       nv['t'] += 1
-      nv['r'] += NOVA['grow'] * (1.0 - nv['r'] / (NOVA['r'] * 1.25))
+      nv['r'] += NOVA['grow']                        # rings roll on at a steady pace, right off the screen
       cx, cy = d.x + nv['ox'], d.y + nv['oy']            # the ring stays centred on the dragon
       r0, r1 = nv['r'] - NOVA['band'], nv['r'] + 8
       for name, o in list(self.foe_targets()):
@@ -3180,7 +3694,7 @@ class GameLogic:
           b['flash'] = 4
           for _ in range(6):
             self.add_butterfly(br.centerx + random.randint(-30, 30), br.centery + random.randint(-30, 30), True)
-      if nv['r'] < NOVA['r']:
+      if nv['r'] < WIDTH - (d.x + nv['ox']) + 160:   # until the ring has left the screen on the right
         keep.append(nv)
     self.novas = keep
     keep = []
@@ -3858,11 +4372,13 @@ class GameLogic:
       return
     if sel == "FOREST":
       self.leaf_breath()
+      if self.ground_ok():                           # level 5: thorn vines burst up under troops too
+        self.vine_breath()
       return
     if sel == "COCKATRICE":
       self.egg_breath()
       return
-    if sel == "EAGLE":
+    if sel in TALON_DRAGONS:
       return                                     # (its special works by tapping: see talon_tap)
     if sel == "WHALE":
       self.maw_breath()
@@ -3874,12 +4390,12 @@ class GameLogic:
     if sel == "YELLOW":
       self.chain_lightning(*breath_origin(sel, d, getattr(self, 'flap_ph', 0.0), self.vel, self.pitch))
     elif sel == "SILVER":
-      beam = pygame.Rect(d.right, d.y - 30, 260, 90)       # the gust itself still knocks shots away
+      beam = pygame.Rect(d.right, d.y - 40, 300, 110)      # the gust blasts everything in front of it off the map
     elif sel == "UNICORN":
       beam = self.rainbow_beam()
     targets = ((self.towers, 15, STONE_DARK), (self.catapults, 25, WOOD_BROWN), (self.trebuchets, 25, WOOD_BROWN), (self.enemies, 35, (100, 100, 100)),
                    (self.archers, 20, CLOTH_DARK), (self.mages, 20, MAGIC_PURPLE), (self.ballistas, 30, WOOD_DARK), (self.golems, 40, STONE_DARK), (self.cyclopes, 40, WOOD_BROWN))
-    for lst, pts, col in (() if sel in ("YELLOW", "SILVER") else targets):
+    for lst, pts, col in (() if sel == "YELLOW" else targets):
       for o in lst:
         if beam.colliderect(o['rect']):
           self.apply_breath(o, pts, random.choice(RAINBOW) if sel == "UNICORN" else col)
@@ -3933,6 +4449,12 @@ class GameLogic:
     new_state = BREATH_STATE.get(self.selected)
     if new_state:
       o['state'] = new_state
+      if new_state == 'blown' and 'rect' in o:          # Wind Dragon: blasted away, tumbling off the map (counts as a kill)
+        o['blow_v'] = [random.uniform(16, 22), random.uniform(-6, -2.5)]
+        self.score += int(pts * self.score_mult)
+        self.bounty_add('shatter')
+        cx, cy = o['rect'].center
+        self.burst(cx, cy, 10, 6, 3, 8, (220, 240, 255))
       if new_state == 'frozen':
         o['vy'] = 0.0
         self.burst(*((o['rect'].center) if 'rect' in o else (o['x'], o['y'])), 8, 3, 3, 6, (210, 248, 255))
@@ -4103,13 +4625,19 @@ class GameLogic:
         b['at'] = 0
         b['atk'] = 'lunge_warn' if nxt == 'lunge' else nxt
         AUDIO.play('roar', 0.6)
-    elif atk == 'twin':                             # heads take turns: fire bolt, ice shard, fire bolt...
+    elif atk == 'twin':                             # heads take turns: fire bolt, ice shard, lightning ball...
       b['anim'], b['fi'] = 'twin', min(20, at // 4)
       if 8 <= at <= 72 and (at - 8) % (6 if fast else 8) == 0:
         k = (at - 8) // (6 if fast else 8)
-        if k % 2 == 0:
+        if k % 3 == 0:
           a = aim(fx_, fy_)
           self.fireballs.append({'x': float(fx_), 'y': float(fy_), 'vx': math.cos(a) * 8.5, 'vy': math.sin(a) * 8.5, 'state': 'normal', 'straight': True})
+        elif k % 3 == 2:                             # the third (top) head spits a crackling ball of lightning
+          lx, ly = fx_ + 26, fy_ - 52
+          a = aim(lx, ly)
+          self.orbs.append({'x': float(lx), 'y': float(ly), 'vx': math.cos(a) * 9.0, 'vy': math.sin(a) * 9.0, 'state': 'normal', 'col': (255, 240, 120), 'r': 9,
+                            'home': False, 'kind': 'wiz'})
+          self.burst(lx, ly, 8, 3, 3, 6, (255, 245, 150))
         else:
           a = aim(ix_, iy_)
           self.arrows.append({'x': float(ix_), 'y': float(iy_), 'vx': math.cos(a) * 10.0, 'vy': math.sin(a) * 10.0, 'state': 'normal', 'kind': 'icicle'})
@@ -4129,7 +4657,7 @@ class GameLogic:
       b['anim'], b['fi'] = 'lunge', min(12, int(at * 0.3))
       b['flash'] = 3 if at % 10 < 5 else 0
       if at < 30:
-        b['ty'] = max(10.0, min(GROUND_Y - 150.0, d.centery - 65.0))
+        b['ty'] = max(10.0, min(GROUND_Y - 190.0, d.centery - 85.0))
       b['y'] += (b.get('ty', b['y']) - b['y']) * 0.1
       if at >= 42:
         b['atk'], b['at'], b['hit'] = 'lunge', 0, False
@@ -4138,9 +4666,9 @@ class GameLogic:
       b['anim'], b['fi'] = 'lunge', 13 + (at // 3) % 4
       b['x'] -= 16 * self.ts
       if self.tick:
-        self.emit(b['x'] + random.randint(-40, 0), b['y'] + random.randint(30, 90), random.uniform(-2, 0), random.uniform(-1, 1), random.randint(6, 11),
+        self.emit(b['x'] + random.randint(-50, 0), b['y'] + random.randint(40, 120), random.uniform(-2, 0), random.uniform(-1, 1), random.randint(6, 11),
                   random.choice(((255, 140, 30), (255, 210, 90), (150, 220, 255), (220, 245, 255))))
-      if not self.dash_inv and d.colliderect(pygame.Rect(int(b['x']) - 50, int(b['y']) + 20, 190, 95)):
+      if not self.dash_inv and d.colliderect(pygame.Rect(int(b['x']) - 65, int(b['y']) + 26, 247, 124)):
         if self.shield_active:
           if not b.get('hit'):
             self.shield_active = False
@@ -4149,7 +4677,7 @@ class GameLogic:
           b['hit'] = True
         else:
           self.dead = True
-      if b['x'] < -300:
+      if b['x'] < -380:
         b['x'], b['y'], b['hit'] = WIDTH + 90.0, b['by'], False
         b['atk'], b['at'] = 'return', 0
     elif atk == 'return':
@@ -4192,8 +4720,8 @@ class GameLogic:
         AUDIO.play('whoosh', 0.5)
       if at >= 90:
         b['atk'], b['at'], b['cool'] = 'idle', 0, 45 if fast else 70
-    elif atk == 'laser':                            # charges, lines the ray up on you, fires
-      fi = min(20, at // 4)
+    elif atk == 'laser':                            # charges (holding the first frames), lines the ray up on you, fires
+      fi = min(1, at // 14) if at < 28 else min(20, 2 + (at - 28) // 4)
       b['anim'], b['fi'] = 'laser', fi
       on = BEH_LASER_ON[fi]
       sx, sy, _a = beam_line(b)
@@ -4207,7 +4735,7 @@ class GameLogic:
         b['ang'] += max(-0.006, min(0.006, da))
       b['y'] = max(-40.0, min(GROUND_Y - 150.0, b['y']))
       if at < 32 and self.tick and random.random() < 0.6:   # green light gathering at the great eye
-        ex, ey = beh_point(b, (33, 43))
+        ex, ey = beh_point(b, (36, 37.5))
         a = random.uniform(0, 6.3)
         self.emit(ex + math.cos(a) * 34, ey + math.sin(a) * 34, -math.cos(a) * 2.2, -math.sin(a) * 2.2, random.randint(3, 5), random.choice(((90, 255, 120), (220, 255, 220))))
       if on and not b.get('ray'):
@@ -4227,7 +4755,7 @@ class GameLogic:
             AUDIO.play('shatter', 0.6)
           else:
             self.dead = True
-      if at >= 84:
+      if at >= 108:
         b['ray'] = False
         b['atk'], b['at'], b['cool'] = 'idle', 0, 50 if fast else 80
 
@@ -4328,11 +4856,14 @@ class GameLogic:
         b['atk'], b['at'], b['cool'] = 'idle', 0, 60 if fast else 90
 
   def boss_mult(self, b):
-    return BOSS_RESIST.get(b.get('type'), {}).get(self.selected, 1.0)
+    m = BOSS_RESIST.get(b.get('type'), {}).get(self.selected, 1.0)
+    return m * 1.25 if PERK.has_special(self) else m   # level 10: the special hits 25% harder
 
   def boss_rect(self, b):
+    if b['type'] in NB.NEW_BOSSES:
+      return NB.rect(b)
     if b['type'] == 'hydra':
-      return pygame.Rect(int(b['x']), int(b['y']), 150, 130)
+      return pygame.Rect(int(b['x']), int(b['y']), 195, 169)
     if b['type'] == 'beholder':
       return pygame.Rect(int(b['x']), int(b['y']) + 8, 110, 120)
     if b['type'] == 'jabber':
@@ -4562,7 +5093,7 @@ class GameLogic:
       self.phoenix_down(b)
       return
     elif b['state'] == 'fighting':
-      if b['type'] in ('demon', 'phoenix', 'jabber', 'hydra', 'beholder'):
+      if b['type'] in ('demon', 'phoenix', 'jabber', 'hydra', 'beholder') + NB.NEW_BOSSES:
         pass
       elif b.get('atk') not in ('dive', 'dive_warn_lock', 'thunder'):
         if b['type'] != 'griffin' or b.get('atk') != 'dive':
@@ -4605,8 +5136,13 @@ class GameLogic:
           self.b6 = True
           b['ray'] = False
           b['anim'] = 'death'
+        elif b['type'] in NB.NEW_BOSSES:
+          setattr(self, {'sphinx': 'b7', 'manticore': 'b8', 'mothman': 'b9'}[b['type']], True)
+          b['warn'] = False
         else:
           self.b4 = True
+        FX.boss_hit_fx(self, True)
+        self.freeze = 14
         self.drop_egg(b['type'], b['x'] + 50, b['y'] + 50)
         self.run_bosses = getattr(self, 'run_bosses', 0) + 1
         self.note_boss(b['type'])
@@ -4622,11 +5158,15 @@ class GameLogic:
         self.hydra_ai(b)
       elif b['type'] == 'beholder':
         self.beholder_ai(b)
+      elif b['type'] in NB.NEW_BOSSES:
+        NB.ai(self, b)
       elif b['type'] == 'phoenix':
         self.phoenix_ai(b)
       elif b['type'] == 'zeppelin' and random.random() < 0.04:
         self.fireballs.append({'x': float(b['x']), 'y': float(b['y'] + 50), 'vx': -8, 'vy': 0, 'state': 'normal'})
         self.fireballs.append({'x': float(b['x'] + 50), 'y': float(b['y'] + 80), 'vx': -2, 'vy': 5, 'state': 'normal'})
+    elif b['type'] in NB.NEW_BOSSES:  # dying: falls and plays its death animation
+      NB.dying(self, b)
     elif b['type'] == 'demon':  # dying: drops quickly to the ground, then plays the death animation there
       b['dt'] += 1
       floor = GROUND_Y - 148.0
@@ -4660,7 +5200,7 @@ class GameLogic:
         self.boss = None
     elif b['type'] == 'hydra':  # dying: drops to the ground and collapses into a heap of bones
       b['dt'] += 1
-      floor = GROUND_Y - 65.0 - HYD_BOTTOM[0] * HYD_SCALE
+      floor = GROUND_Y - 85.0 - HYD_BOTTOM[0] * HYD_SCALE
       if b.get('landed', -1) < 0:
         b['vy'] = b.get('vy', 0.0) + 0.9
         b['y'] = min(floor, b['y'] + b['vy'])
@@ -4671,7 +5211,7 @@ class GameLogic:
           AUDIO.play('shatter', 0.9)
       else:
         k = b['dt'] - b['landed']
-        b['y'] = GROUND_Y - 65.0 - HYD_BOTTOM[min(len(HYD_BOTTOM) - 1, k // 5)] * HYD_SCALE
+        b['y'] = GROUND_Y - 85.0 - HYD_BOTTOM[min(len(HYD_BOTTOM) - 1, k // 5)] * HYD_SCALE
         if k > 110:
           b['alpha'] = max(0, 255 - (k - 110) * 8)
         if k > 142:

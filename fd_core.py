@@ -1,5 +1,5 @@
 """
-Flappy Dragon  --  optimised + visual refresh
+Raid the Realm: Dragon Siege  --  optimised + visual refresh
 
 Performance notes
   * Backgrounds (sky, stars, moon, mountains, hills, clouds, mist, ground) are pre-rendered once.
@@ -47,8 +47,32 @@ GLIDE_DELAY = 9
 GLIDE_UP = 8.0
 GLIDE_DOWN = 10.5
 GLIDE_SINK = 0.8
+GLIDE_SINK_MAX = 1.9     # holding a glide keeps losing height faster, up to this (px a frame)
+GLIDE_SINK_GROW = 0.008
+GLIDE_CARRY = 5.0        # height a glide can still climb = this x the upward speed when it began
+GLIDE_KEEP = 0.55        # a dive banks this much of the height it drops for swooping back up
+GLIDE_FADE = 0.995       # saved-up swoop height bleeds away
+GLIDE_BEAT = 80.0        # frames per lazy wing beat while gliding
 FLIP_FRAMES = 26
 BASE_SCROLL = 5
+SCROLL_LATE = 0.12      # extra speed per threat level after the first boss (was 0.4)
+DRAGON_MAX_LEVEL = 10        # starting level cap; every baby you raise to Adult adds 1 (up to DRAGON_LEVEL_CAP)
+DRAGON_LEVEL_CAP = 20
+PET_XP_SHARE = 0.35          # share of its XP your companion baby passes on to your dragon
+PET_MATCH_BONUS = 2.0        # ... doubled when the baby is the same kind as your dragon
+GROUND_LEVEL = 5        # level a dragon needs before its breath also attacks the ground (lava pools, acid pools, tornados)
+TALON_DRAGONS = ("EAGLE", "RAVEN", "PERYTON")   # every tap dives at the nearest foe
+GROUND_DRAGONS = ("RAVEN", "PERYTON", "RED", "GREEN", "ALIEN", "SILVER", "FOREST", "BLUE", "YELLOW", "SKELETAL", "COSMIC", "UNICORN", "WRAITH",
+                  "CHINESE", "CLOCKWORK", "COCKATRICE", "WHALE", "FEY", "EAGLE")
+
+
+def dragon_need(level):
+  """XP to go from this level to the next"""
+  return 150 + 100 * (level - 1)
+
+
+SIEGE_BREAK = 16        # frames a wrecked siege engine buckles before bursting into planks
+SCROLL_MAX = 10.0       # the world never scrolls faster than this (before diving)
 TOWER_WIDTH = 95
 FIREBALL_GRAVITY = 0.18
 GROUND_H = 32
@@ -96,7 +120,7 @@ DRAGON_PALETTES = {
   "GREEN": {'main': (38, 198, 152), 'dark': (18, 92, 96), 'belly': (255, 216, 72), 'eye': (255, 70, 50), 'trail': [(176, 240, 70), (255, 170, 50)], 'cost': 300, 'title': "Acid Dragon", 'desc': "Acid globs burn the ground and shatter foes."},
   "CHRONO": {'main': (25, 105, 125), 'dark': (10, 42, 62), 'belly': (240, 210, 110), 'eye': (255, 235, 130), 'trail': [(120, 230, 255), (240, 210, 110)], 'cost': 600, 'title': "Chrono Wyrm", 'desc': "Breath slows time and freezes foes."},
   "YELLOW": {'main': (248, 204, 52), 'dark': (150, 96, 24), 'belly': (255, 246, 200), 'eye': (70, 200, 255), 'trail': [(120, 220, 255), (255, 236, 90)], 'cost': 450, 'title': "Lightning Dragon", 'desc': "Chain lightning leaps foe to foe and crumbles towers."},
-  "SILVER": {'main': (150, 138, 168), 'dark': (58, 50, 78), 'belly': (236, 226, 212), 'eye': (255, 216, 60), 'trail': [(200, 236, 255), (255, 255, 255)], 'cost': 750, 'title': "Wind Dragon", 'desc': "Breathes tornados that fling foes far away."},
+  "SILVER": {'main': (150, 138, 168), 'dark': (58, 50, 78), 'belly': (236, 226, 212), 'eye': (255, 216, 60), 'trail': [(200, 236, 255), (255, 255, 255)], 'cost': 750, 'title': "Wind Dragon", 'desc': "Its wind blast hurls foes right off the map."},
   "CHINESE": {'main': (200, 30, 40), 'dark': (140, 20, 20), 'belly': (240, 200, 50), 'eye': (0, 255, 150), 'trail': [(255, 230, 120), (255, 255, 255)], 'cost': 5000, 'title': "Lung Dragon", 'desc': "Blasts a roaring Tidal Jet of water that washes foes away and trails crackling sparks. +50% gold from coins."},
   "SKELETAL": {'main': (220, 205, 170), 'dark': (90, 20, 24), 'belly': (160, 150, 120), 'eye': (255, 40, 40), 'trail': [(180, 120, 240), (70, 64, 70)], 'cost': 5000, 'title': "Bone Reaper", 'desc': "Grave Curse fog: cursed foes burst into bones and rise as wisps that hunt the rest. Shields regrow on their own."},
   "COSMIC": {'main': (40, 22, 72), 'dark': (14, 8, 30), 'belly': (190, 70, 240), 'eye': (255, 150, 255), 'trail': [(230, 200, 255), (255, 255, 255)], 'cost': 6500, 'title': "Void Dragon", 'desc': "Opens a black hole that swallows foes and their shots. Leaves a trail of stars."},
@@ -106,6 +130,8 @@ DRAGON_PALETTES = {
   "FOREST": {'main': (90, 120, 40), 'dark': (40, 56, 20), 'belly': (190, 170, 90), 'eye': (255, 220, 60), 'trail': [(120, 190, 50), (200, 170, 60)], 'cost': 600, 'title': "Forest Dragon", 'desc': "Razor Leaf Storm: a whirling stream of blade-sharp leaves that slices through everything ahead. Leaves a trail of falling leaves."},
   "COCKATRICE": {'main': (190, 110, 40), 'dark': (70, 60, 24), 'belly': (230, 170, 80), 'eye': (255, 230, 80), 'trail': [(200, 60, 40), (120, 140, 50)], 'cost': 6500, 'title': "Cockatrice", 'desc': "Pelts foes with a steady stream of eggs. Each egg that hits cracks open and a tiny cockatrice flies out to attack the nearest foe."},
   "ALIEN": {'main': (40, 120, 50), 'dark': (14, 40, 20), 'belly': (130, 255, 90), 'eye': (130, 255, 90), 'trail': [(130, 255, 90), (60, 200, 60)], 'cost': 900, 'title': "Alien Dragon", 'desc': "A dragon from beyond the stars. Sprays acid that melts foes and leaves bubbling pools on the ground."},
+  "RAVEN": {'main': (40, 36, 52), 'dark': (14, 12, 20), 'belly': (90, 80, 110), 'eye': (200, 60, 240), 'trail': [(80, 60, 110), (30, 26, 40)], 'cost': 1400, 'title': "Giant Raven", 'desc': "Talon Strike: each tap dives at the nearest foe, anywhere on screen, and destroys it. Takes no damage while it strikes."},
+  "PERYTON": {'main': (60, 56, 64), 'dark': (24, 20, 26), 'belly': (180, 40, 50), 'eye': (255, 80, 60), 'trail': [(200, 40, 50), (60, 56, 64)], 'cost': 1600, 'title': "Peryton", 'desc': "Antlered winged stag. Talon Strike: each tap it dives at the nearest foe and gores it. Takes no damage while it strikes."},
   "EAGLE": {'main': (190, 140, 50), 'dark': (90, 60, 20), 'belly': (240, 210, 140), 'eye': (255, 220, 80), 'trail': [(250, 230, 180), (220, 180, 90)], 'cost': 1200, 'title': "Giant Eagle", 'desc': "Talon Strike: each tap dives at the nearest foe, anywhere on screen, and destroys it. Takes no damage while it strikes."},
   "WHALE": {'main': (70, 50, 150), 'dark': (30, 18, 70), 'belly': (210, 220, 255), 'eye': (255, 255, 255), 'trail': [(200, 180, 255), (255, 255, 255)], 'cost': 8500, 'title': "Cosmic Whale", 'desc': "Cosmic Maw: opens its starry jaws and drags foes and their shots into a swirling vortex, swallowing them whole."},
   "FEY": {'main': (60, 150, 230), 'dark': (60, 30, 110), 'belly': (240, 120, 220), 'eye': (120, 255, 255), 'trail': [(255, 150, 240), (140, 240, 255)], 'cost': 7500, 'title': "Fey Dragon", 'desc': "Glamour Nova: bursts of fey magic ripple outward and turn every foe they touch into a flutter of butterflies."},
@@ -122,6 +148,7 @@ BREATH_COLORS = {
   "CHRONO": [(255, 225, 120), (120, 230, 255), (255, 255, 255)],
   "COSMIC": [(230, 200, 255), (190, 90, 255), (255, 255, 255)],
   "UNICORN": [(255, 70, 70), (255, 170, 40), (255, 240, 70), (80, 230, 90), (70, 170, 255), (170, 90, 255)],
+  "CHINESE": [(120, 210, 255), (60, 150, 240), (220, 245, 255)],     # the Lung Dragon in its water form
 }
 DEFAULT_BREATH = [FIRE_CORE, (255, 160, 20), (255, 70, 0), (80, 80, 85)]
 BREATH_BAR = {"ALIEN": (120, 255, 80), "EAGLE": (255, 210, 110), "WHALE": (190, 160, 255), "FEY": (255, 140, 240), "COCKATRICE": (255, 200, 90), "FOREST": (130, 210, 60), "CLOCKWORK": (240, 190, 90), "CHINESE": (90, 200, 255), "WRAITH": (120, 240, 255), "UNICORN": (255, 120, 220), "COSMIC": (200, 120, 255), "RED": (255, 110, 20), "BLUE": ICE_BLUE, "YELLOW": (255, 220, 0), "SILVER": (200, 200, 200), "GREEN": (100, 255, 50), "SKELETAL": (190, 110, 255), "CHRONO": (120, 230, 255)}
@@ -131,8 +158,10 @@ RAINBOW = ((255, 64, 64), (255, 150, 40), (255, 236, 70), (70, 222, 96), (60, 17
 PHX_BEAK = (-63, -33)     # phoenix beak from its body centre at 3x (strike frames)
 MAX_HEARTS = 5
 LEAF = {'every': 2, 'max': 44, 'life': 48, 'pierce': 2, 'heavy': 6}   # Forest Dragon's razor leaves
+TALON_SPEED = 0.75          # Giant Eagle dive speed (1.0 = the old speed)
+TALON_BOSS = 0.065          # share of a boss's health one Giant Eagle strike takes
 MAW = {'range': 360, 'cone': 0.55, 'gulp': 30, 'heavy': 34, 'pull': 9.0}   # Cosmic Whale's Cosmic Maw: reach, cone spread, swallow distance, frames to tear apart big foes
-NOVA = {'r': 300, 'grow': 11.0, 'band': 34, 'chips': 2, 'boss': 22.0, 'flies': 4, 'fly_life': 110}   # Fey Dragon's Glamour Nova rings and butterflies
+NOVA = {'r': WIDTH + 220, 'grow': 14.0, 'every': 16, 'band': 34, 'chips': 2, 'boss': 22.0, 'flies': 4, 'fly_life': 110}   # Fey Dragon's Glamour Nova rings and butterflies
 EGG_SHOT = {'every': 6, 'max': 10, 'chicks': 8, 'chick_life': 200, 'pecks': 2}   # Cockatrice eggs and hatchlings
 VINE = {'every': 11, 'reach': 330, 'grow': 8, 'hold': 10, 'max': 4}   # Forest Dragon's bramble vines
 MISSILE = {'every': 9, 'max': 8, 'speed': 11.0, 'turn': 0.13, 'life': 120, 'blast': 48}   # Clockwork Dragon's homing missiles
@@ -141,6 +170,11 @@ NIGHT_SCALE = {'moth': 1.5, 'bat': 1.35}       # giant moth / bat art size
 NIGHT_BOX = {'moth': (66, 60), 'bat': (54, 46)}  # their hitboxes
 UNI_HOOF = 38             # Evil Unicorn: hooves sit this far below its hitbox, so it can gallop along the ground
 BREATH_MOUTH = {'ALIEN': (-6, -4), 'EAGLE': (0, 0), 'WHALE': (-14, 16), 'FEY': (-6, 0), 'COCKATRICE': (-3, -10), 'SILVER': (7, -10), 'GREEN': (-17, 6), 'YELLOW': (-10, -2), 'FOREST': (20, 6), 'CHINESE': (0, 3), 'CLOCKWORK': (-5, 10), 'WRAITH': (7, 0), 'RED': (5, 6), 'BLUE': (3, 18), 'UNICORN': (24, 9)}   # mouth / horn tip offset from the usual breath point
+for _k, _c in (('RAVEN', ((150, 110, 200), (60, 50, 80), (230, 220, 255))), ('PERYTON', ((230, 60, 70), (90, 80, 96), (255, 200, 200)))):
+  BREATH_COLORS[_k] = list(_c)
+  BREATH_BAR[_k] = _c[0]
+  BREATH_GLOW[_k] = tuple(v // 3 for v in _c[0])
+  BREATH_MOUTH[_k] = BREATH_MOUTH['EAGLE']
 BREATH_STATE = {"BLUE": "frozen", "YELLOW": "stunned", "SILVER": "blown", "CHRONO": "stasis"}
 STASIS_FRAMES = 220
 CHAIN_JUMPS = 3          # lightning jumps after the first hit
@@ -148,9 +182,12 @@ CHAIN_RANGE = 190        # how close the next foe must be for the lightning to j
 TORNADO_EVERY = 38       # frames between tornados while the Wind Dragon breathes
 TORNADO_SPEED = 7.5
 SHATTER_TINT = {"ALIEN": (140, 255, 80), "EAGLE": (240, 210, 140), "CHINESE": (150, 220, 255), "BLUE": (190, 235, 255), "GREEN": (110, 255, 60)}   # shard colour when ice / acid shatters something
-WEATHER_KINDS = ["clear", "rain", "storm", "fog", "wind", "snow"]
-WEATHER_WEIGHTS = [2, 3, 2, 2, 2, 2]
-WEATHER_NAMES = {"rain": "Heavy Rain", "storm": "Thunderstorm", "fog": "Thick Fog", "wind": "Gale Winds", "snow": "Snowfall"}
+for _k, _t in (('RAVEN', (230, 220, 255)), ('PERYTON', (255, 200, 200))):
+  SHATTER_TINT[_k] = _t
+WEATHER_KINDS = ["clear", "rain", "storm", "fog", "wind", "snow", "sand"]
+WEATHER_WEIGHTS = [2, 3, 2, 2, 2, 2, 3]
+WEATHER_ONLY = {"sand": ("desert",)}     # weather that only happens in some worlds
+WEATHER_NAMES = {"rain": "Heavy Rain", "storm": "Thunderstorm", "fog": "Thick Fog", "wind": "Gale Winds", "snow": "Snowfall", "sand": "Sandstorm"}
 STUCK_STATES = ("frozen", "stunned", "melted")
 HOLD_STATES = ("stasis",)
 
@@ -192,6 +229,11 @@ BOUNTIES = [
   {"type": "boss", "foe": "beholder", "target": 1, "desc": "Blind the Beholder", "gold": 450},
   {"type": "boss", "foe": "jabber", "target": 1, "desc": "Slay the Jabberwock", "gold": 500},
   {"type": "boss", "foe": "hydra", "target": 1, "desc": "Slay the Hydra", "gold": 800},
+  {"type": "boss", "foe": "sphinx", "target": 1, "desc": "Topple the Sphinx", "gold": 650},
+  {"type": "boss", "foe": "manticore", "target": 1, "desc": "Slay the Manticore", "gold": 700},
+  {"type": "boss", "foe": "mothman", "target": 1, "desc": "Banish the Mothman", "gold": 750},
+  {"type": "kill", "foe": "scarab", "target": 10, "desc": "Crack 10 Scarabs", "gold": 120},
+  {"type": "kill", "foe": "banshee", "target": 6, "desc": "Silence 6 Banshees", "gold": 120},
   {"type": "boss", "foe": "demon", "target": 1, "desc": "Defeat the Fire Demon", "gold": 600},
   # one-run feats (best single run counts)
   {"type": "distance", "target": 1500, "desc": "Fly 1,500 m in One Run", "gold": 120},
@@ -206,6 +248,8 @@ BOUNTIES = [
   {"type": "kill", "dragon": "GREEN", "target": 25, "desc": "Defeat 25 Foes as the Acid Dragon", "gold": 160},
   {"type": "kill", "dragon": "ALIEN", "target": 25, "desc": "Melt 25 Foes as the Alien Dragon", "gold": 170},
   {"type": "kill", "dragon": "EAGLE", "target": 25, "desc": "Strike Down 25 Foes as the Giant Eagle", "gold": 180},
+  {"type": "kill", "dragon": "RAVEN", "target": 25, "desc": "Strike Down 25 Foes as the Giant Raven", "gold": 180},
+  {"type": "kill", "dragon": "PERYTON", "target": 25, "desc": "Gore 25 Foes as the Peryton", "gold": 200},
   {"type": "kill", "dragon": "YELLOW", "target": 25, "desc": "Defeat 25 Foes as the Lightning Dragon", "gold": 160},
   {"type": "kill", "dragon": "SILVER", "target": 25, "desc": "Defeat 25 Foes as the Wind Dragon", "gold": 160},
   {"type": "kill", "dragon": "CHINESE", "target": 30, "desc": "Wash Away 30 Foes as the Lung Dragon", "gold": 200},
@@ -227,10 +271,15 @@ def quest_gold(q):
 
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.SCALED)
-pygame.display.set_caption("Flappy Dragon")
+pygame.display.set_caption("Raid the Realm: Dragon Siege")
 game_surface = pygame.Surface((WIDTH, HEIGHT)).convert()
 clock = pygame.time.Clock()
 
+try:                                     # the built-in game font, so text looks the same on every phone
+  import fd_font
+  fd_font.install()
+except Exception:
+  pass
 title_font = pygame.font.SysFont("serif", 80, bold=True)
 hud_font = pygame.font.SysFont("serif", 38, bold=True)
 button_font = pygame.font.SysFont("serif", 28, bold=True)
@@ -244,7 +293,7 @@ def load_data():
     "high_score": 0, "coins": 0, "unlocked": ["RED"],
     "upgrades": {"thick_scales": 0, "deep_lungs": 0, "coin_magnet": 0},
     "completed_quests": 0, "active_quest": None,
-    "music": True, "sfx": True, "music_vol": 100, "sfx_vol": 100, "fullscreen": True, "weather": True, "difficulty": "easy", "shake": True, "vibrate": True, "eggs": [], "roosts": [None], "egg_id": 0, "hatched": 0, "babies": [], "companion": None,
+    "music": True, "sfx": True, "music_vol": 100, "sfx_vol": 100, "fullscreen": True, "weather": True, "difficulty": "easy", "shake": True, "vibrate": True, "lefty": False, "eggs": [], "roosts": [None], "egg_id": 0, "hatched": 0, "babies": [], "companion": None,
   }
   if os.path.exists(SAVE_FILE):
     try:
@@ -254,8 +303,12 @@ def load_data():
         data.setdefault(k, v)
       for k, v in default["upgrades"].items():
         data["upgrades"].setdefault(k, v)
-      if "VOID" in data["unlocked"]:           # Abyssal dragon became the Chrono Wyrm
-        data["unlocked"] = ["CHRONO" if u == "VOID" else u for u in data["unlocked"]]
+      data["unlocked"] = [u for u in data["unlocked"] if u not in ("VOID", "CHRONO")] or ["RED"]   # the Chrono Wyrm is retired
+      for bb in data.get("babies", []):
+        if bb.get("type") == "CHRONO":
+          bb["type"] = "BLUE"
+        if bb.get("type"):
+          bb["name"] = baby_name(bb["type"])                       # (old saves: the picked names are replaced)
       return _test_grant(data)
     except (OSError, ValueError):
       pass
@@ -264,13 +317,15 @@ def load_data():
 TOWER_GARRISON = 0.35              # chance an open-topped tower has an archer or mage on it
 CURSE = {'time': 40, 'heavy': 85, 'spread': 70, 'wisps': 8, 'wisp_life': 150}   # Bone Reaper: frames until a cursed foe bursts
 VOID_HOLE = {'r': 34, 'pull': 270, 'life': 1200, 'close': 36}   # Void dragon black hole: core radius, pull range, max open frames
-BOSS_SCORES = (1500, 4500, 9000, 14000, 20000, 27000)   # score needed to meet the Griffin, Phoenix, Beholder, Jabberwock, Demon and Hydra
-TEST_GOLD = 50000          # one-time testing gift for this release (set to 0 to turn off)
-TEST_PACK = True           # one-time testing gift: 1 egg of every rarity + one baby of every dragon (False to turn off)
+BOSS_SCORES = (1500, 4500, 9000, 14000, 20000, 54000, 27000, 35000, 44000)   # score to meet the Griffin, Phoenix, Beholder, Jabberwock, Demon, Hydra (last), Sphinx, Manticore, Mothman
+TEST_GOLD = 0              # one-time testing gift for this release (set to 0 to turn off)
+TEST_PACK = False          # one-time testing gift: 1 egg of every rarity + one baby of every dragon (False to turn off)
 TEST_BABIES = (('RED', 'common'), ('BLUE', 'common'), ('GREEN', 'common'), ('FOREST', 'uncommon'),
                ('YELLOW', 'rare'), ('SILVER', 'rare'), ('CLOCKWORK', 'rare'), ('CHINESE', 'epic'), ('WRAITH', 'epic'),
-               ('SKELETAL', 'legendary'), ('COSMIC', 'legendary'), ('UNICORN', 'legendary'), ('COCKATRICE', 'epic'), ('WHALE', 'legendary'), ('FEY', 'epic'), ('ALIEN', 'uncommon'), ('EAGLE', 'rare'))
-TEST_PACK_ID = 5           # bump to hand the testing gift out again (new babies were added)
+               ('SKELETAL', 'legendary'), ('COSMIC', 'legendary'), ('UNICORN', 'legendary'), ('COCKATRICE', 'epic'), ('WHALE', 'legendary'), ('FEY', 'epic'), ('ALIEN', 'uncommon'), ('EAGLE', 'rare'),
+               ('RAVEN', 'rare'), ('PERYTON', 'epic'))
+TEST_PACK_ID = 6           # bump to hand the testing gift out again (new babies were added)
+TEST_MAXED = False         # TESTING ONLY: every playable dragon unlocked at level 20, and the test whelps grown to Adult (False to turn off)
 
 def _test_grant(data):
   if TEST_GOLD and not data.get("test_gold_given"):
@@ -283,11 +338,22 @@ def _test_grant(data):
       data.setdefault("eggs", []).append({"id": data["egg_id"], "r": rar, "boss": "gift"})
     for typ, rar in TEST_BABIES:
       data["egg_id"] = data.get("egg_id", 0) + 1
-      data.setdefault("babies", []).append({"id": data["egg_id"], "r": rar, "type": typ, "name": _r.choice(BABY_NAMES),
+      data.setdefault("babies", []).append({"id": data["egg_id"], "r": rar, "type": typ, "name": baby_name(typ),
                                             "born": _t.time(), "happy": 80.0})
     if data.get("companion") is None and data["babies"]:
       data["companion"] = data["babies"][0]["id"]
     data["test_pack_given"] = TEST_PACK_ID
+  if TEST_MAXED:
+    keys = [k for k, _r in TEST_BABIES]
+    for k in keys:
+      if k not in data["unlocked"]:
+        data["unlocked"].append(k)
+      data.setdefault("dlv", {})[k] = [DRAGON_LEVEL_CAP, 0]
+    grown = 0
+    for bb in data.get("babies", []):                # ten Adult whelps lift the level cap to 20
+      if grown < 12:
+        bb["level"] = max(bb.get("level", 1), 10)                # (Adult)
+        grown += 1
   return data
 
 def save_data(data):
@@ -488,19 +554,20 @@ def cached_sprite(key, w, h, ox, oy, draw_fn):
 MENU_ITEMS = [
   ("play", "ENTER REALM", PARCHMENT, IRON_GRAY, GOLD_BORDER),
   ("lair", "LAIR", BANNER_GOLD, WOOD_DARK, GOLD_BORDER),
-  # ("worlds", "WORLDS", ICE_BLUE, STONE_DARK, GOLD_BORDER),   # (hidden until the Worlds page is built)
   ("options", "OPTIONS", PARCHMENT, IRON_GRAY, GOLD_BORDER),
   ("exit", "ABANDON SIEGE", PARCHMENT, IRON_GRAY, GOLD_BORDER),
 ]
 LAIR_ITEMS = [
-  ("roster", "DRAGON ROSTER", PARCHMENT, IRON_GRAY, GOLD_BORDER),
-  ("hoard", "THE HOARD", BANNER_GOLD, WOOD_DARK, GOLD_BORDER),
+  ("roster", "DRAGONS ROOST", PARCHMENT, IRON_GRAY, GOLD_BORDER),
+  ("hoard", "THE FORGE", BANNER_GOLD, WOOD_DARK, GOLD_BORDER),
   ("quests", "QUESTS", ICE_BLUE, STONE_DARK, GOLD_BORDER),
   ("enemies", "ENEMIES", PARCHMENT, IRON_GRAY, GOLD_BORDER),
   ("eggs", "DRAGON EGGS", BANNER_GOLD, WOOD_DARK, GOLD_BORDER),
-  ("hatchlings", "HATCHLINGS", BANNER_GOLD, WOOD_DARK, GOLD_BORDER),
+  ("hatchlings", "WHELPS", BANNER_GOLD, WOOD_DARK, GOLD_BORDER),
+  ("worlds", "REALM", ICE_BLUE, STONE_DARK, GOLD_BORDER),
+  ("hearths", "HEARTHS", BANNER_GOLD, WOOD_DARK, GOLD_BORDER),
 ]
-LAIR_RECTS = {k: pygame.Rect(max(12, WIDTH // 2 - 612) if i < 3 else min(WIDTH - 302, WIDTH // 2 + 322), 128 + (i % 3) * 107, 290, 64) for i, (k, *_r) in enumerate(LAIR_ITEMS)}   # hanging signs in the cave
+LAIR_RECTS = {k: pygame.Rect(max(12, WIDTH // 2 - 612) if i < 4 else min(WIDTH - 302, WIDTH // 2 + 322), 120 + (i % 4) * 100, 290, 64) for i, (k, *_r) in enumerate(LAIR_ITEMS)}   # hanging signs in the cave
 SND_BTN = pygame.Rect(14, 14, 50, 40)
 # roster detail page: star ratings (power, range, breath time, speed) and breath / special text
 DRAGON_INFO = {
@@ -509,9 +576,11 @@ DRAGON_INFO = {
   "GREEN": ((3, 3, 3, 4), "Acid spray", "Bubbling acid pools"),
   "ALIEN": ((3, 3, 3, 4), "Acid spray", "Bubbling acid pools"),
   "EAGLE": ((5, 5, 3, 5), "Talon Strike", "Each tap dives at the nearest foe"),
+  "RAVEN": ((5, 5, 3, 5), "Talon Strike", "Each tap dives at the nearest foe"),
+  "PERYTON": ((5, 5, 3, 5), "Antler Strike", "Each tap dives at the nearest foe"),
   "CHRONO": ((2, 4, 3, 3), "Time wave", "Slows time for everyone"),
   "YELLOW": ((5, 5, 3, 3), "Chain lightning", "Jumps foe to foe, crumbles towers"),
-  "SILVER": ((4, 4, 3, 5), "Tornado gust", "Tornados fling foes away"),
+  "SILVER": ((4, 4, 3, 5), "Wind blast", "Blasts foes right off the map"),
   "CHINESE": ((4, 4, 4, 5), "Tidal jet", "Washes foes away; +50% gold"),
   "CLOCKWORK": ((5, 5, 3, 3), "Homing missiles", "Missiles seek foes and explode"),
   "FOREST": ((4, 5, 3, 4), "Razor leaf storm", "Leaves slice through foes and shots"),
@@ -535,19 +604,28 @@ ENEMY_INFO = [
   ("golem", "Rock Golem", "GROUND", "Lumbers in once the Griffin falls and hurls huge boulders.", (4, 5, 1), "Thrown boulders", "Lightning and acid", "After the Griffin", "10"),
   ("harpy", "Harpy", "FLYING", "Swooping bird-women. The fiercest flash a red ! and lunge at you.", (3, 2, 4), "Flying lunge", "Any breath, dash", "From the start", "10"),
   ("garg", "Gargoyle", "FLYING", "Stone-winged brutes that charge straight through the sky.", (3, 3, 3), "Charge", "Any breath, dash", "From the start", "10"),
-  ("imp", "Imp", "FLYING", "Little devils that fly in packs of three to five.", (2, 1, 4), "Swarm", "Any breath", "From the start", "3 each"),
+  ("imp", "Imp", "FLYING", "Little devils that fly in packs of two to four.", (2, 1, 4), "Swarm", "Any breath", "From the start", "3 each"),
   ("cyclops", "Cyclops", "GROUND", "A one-eyed brute who winds up and hurls his huge wooden club at you.", (4, 4, 1), "Thrown club", "Lightning and acid", "Threat level 5", "10"),
-  ("spider", "Undead Spider", "FLYING", "Poisonous skull spiders that drop from the sky in diagonal lines of three to five, trailing silk.", (2, 1, 2), "Falling swarm", "Any breath", "Threat level 3", "3 each"),
+  ("spider", "Undead Spider", "FLYING", "Poisonous skull spiders that drop from the sky in diagonal lines of two to four, trailing silk.", (2, 1, 2), "Falling swarm", "Any breath", "Threat level 3", "3 each"),
   ("witch", "Witch", "FLYING", "Hovers high above the battle and hurls bolts of green magic straight at you.", (4, 1, 2), "Magic bolts", "Any breath, dash", "Threat level 3", "10"),
   ("moth", "Giant Moth", "FLYING", "A huge, gross moth that flutters slowly in and flings spheres of purple magic that drift after you.", (3, 2, 1), "Homing magic", "Any breath, dash", "Threat level 3", "10"),
   ("bat", "Giant Bat", "FLYING", "Swoops in on a zig-zag path, drifting toward your height, and hits you with a red sonic screech.", (3, 2, 4), "Sonic screech", "Any breath, dash", "Threat level 2", "10"),
-  ("eye", "Floating Eye", "FLYING", "Eyeballs that drift in groups of three to five.", (1, 1, 3), "Ramming", "Anything", "From the start", "2 each"),
+  ("eye", "Floating Eye", "FLYING", "Eyeballs that drift in groups of two to four.", (1, 1, 3), "Ramming", "Anything", "From the start", "2 each"),
+  ("banshee", "Banshee", "FLYING", "A wailing ghost that drifts in slowly and screams rings of freezing sound at you.", (3, 2, 2), "Sonic wail", "Any breath", "Threat level 3", "12"),
+  ("vulture", "Vulture", "FLYING", "Circles in and then dives straight at you in a feathered rush. Often hunts in pairs.", (3, 2, 4), "Diving dash", "Any breath, dodge the dash", "Threat level 2", "10"),
+  ("scarab", "Sacred Scarab", "FLYING", "A giant beetle that skims low and charges horn-first. Loves the desert.", (3, 3, 4), "Horn charge", "Any breath", "Threat level 3", "10"),
+  ("snake", "Winged Serpent", "FLYING", "Little winged snakes in groups of two to four. They spit venom and lunge to bite.", (2, 1, 4), "Venom spit", "Any breath", "Threat level 2", "4 each"),
+  ("djinn", "Djinn", "FLYING", "A spirit of smoke and magic that hangs back and hurls balls of blue fire that curve after you.", (4, 2, 2), "Homing magic", "Any breath, dash", "Threat level 4", "12"),
+  ("wyrm", "Wyvern", "FLYING", "A lean, two-legged dragon cousin that swoops in and spits fireballs.", (3, 3, 4), "Fireballs", "Ice and lightning", "Threat level 3", "10"),
   ("griffin", "Griffin", "BOSS", "King of the skies: feather volleys, wind gusts and a diving strike.", (4, 3, 4), "Feathers, gusts, dive", "Stay out of the dive", "Score 1,500", "300"),
   ("phoenix", "Phoenix", "BOSS", "Fireballs, crescent slashes, a burst of fire feathers and a burning dive. Rises once from its own ashes.", (5, 4, 5), "Fire volleys, dive", "Finish it twice!", "Score 4,500", "300"),
   ("beholder", "Beholder", "BOSS", "A floating eye tyrant. Charges its great eye to fire a death ray, and its eyestalks spit eyeballs that hunt you across the sky.", (5, 4, 3), "Death ray, seeker eyes", "Lightning and wind", "Score 9,000", "300"),
-  ("jabber", "Jabberwock", "BOSS", "The jaws that bite, the claws that catch! Spits volleys of spit-balls, sweeps a burbling green beam and charges straight through the sky.", (5, 5, 4), "Spit, beam, charge", "Fire and lightning", "Score 14,000", "300"),
+  ("jabber", "Jabberwock", "BOSS", "The jaws that bite, the claws that scratch! Spits volleys of spit-balls, sweeps a burbling green beam and charges straight through the sky.", (5, 5, 4), "Spit, beam, charge", "Fire and lightning", "Score 14,000", "300"),
   ("demon", "Fire Demon", "BOSS", "Sends fire crescents from his sword, phases out to dodge and raises a red shield.", (5, 5, 3), "Fire crescents", "Hit him between shields", "Score 20,000", "300"),
-  ("hydra", "Hydra", "BOSS", "A two-headed horror: one head breathes fire, the other frost. Spits bolts in turn, rains ice shards and lunges across the sky.", (5, 5, 4), "Fire & ice, lunge", "Lightning and acid", "Score 27,000", "300"),
+  ("sphinx", "Sphinx", "BOSS", "Guardian of the sands: it lunges to bite, pounces across the sky and beats its wings to hurl sand blades.", (5, 4, 4), "Bite, pounce, sand blades", "Ice and water", "Score 27,000", "300"),
+  ("manticore", "Manticore", "BOSS", "Lion, bat and scorpion in one. Bites, flings volleys of tail spikes and dives on you from above.", (5, 5, 4), "Bite, tail spikes, dive", "Ice and lightning", "Score 35,000", "300"),
+  ("mothman", "Mothman", "BOSS", "Red eyes in the dark. Its wing-dust spell blinds the sky with seeking motes, then it rushes straight at you.", (5, 4, 5), "Claws, dust spell, rush", "Fire and light", "Score 44,000", "300"),
+  ("hydra", "Hydra", "BOSS", "Three heads: one breathes fire, one frost, one lightning. They spit bolts in turn, rain ice shards and lunge across the sky.", (5, 5, 4), "Fire, ice & lightning", "Lightning and acid", "Score 54,000", "300"),
 ]
 ENEMY_GRID = pygame.Rect(WIDTH // 2 - 375, 100, 750, 384)
 ENEMY_CARD = (236, 160, 21, 176)          # card w, h, column gap, row pitch
@@ -562,16 +640,24 @@ BOSS_EGG_ODDS = {'griffin': (('common', 70), ('uncommon', 30)),
                  'beholder': (('uncommon', 25), ('rare', 55), ('epic', 20)),
                  'jabber': (('rare', 45), ('epic', 40), ('legendary', 15)),
                  'demon': (('rare', 25), ('epic', 45), ('legendary', 30)),
-                 'hydra': (('epic', 50), ('legendary', 50))}
-BOSS_NAMES = {'gift': 'Test Pack', 'griffin': "Griffin", 'phoenix': "Phoenix", 'beholder': "Beholder", 'jabber': "Jabberwock", 'demon': "Fire Demon", 'hydra': "Hydra"}
+                 'sphinx': (('rare', 20), ('epic', 50), ('legendary', 30)),
+                 'manticore': (('epic', 55), ('legendary', 45)),
+                 'mothman': (('epic', 50), ('legendary', 50)),
+                 'hydra': (('epic', 40), ('legendary', 60))}
+BOSS_NAMES = {'gift': 'Test Pack', 'griffin': "Griffin", 'phoenix': "Phoenix", 'beholder': "Beholder", 'jabber': "Jabberwock", 'demon': "Fire Demon", 'hydra': "Hydra", 'sphinx': "Sphinx", 'manticore': "Manticore", 'mothman': "Mothman"}
+def baby_name(typ):
+  """hatchlings are simply called after the dragon they hatched into, e.g. Baby Magma Dragon"""
+  return "Baby " + DRAGON_PALETTES.get(typ, {}).get('title', "Dragon")
+
+
 BABY_NAMES = ('Ember', 'Pip', 'Scorch', 'Nibbles', 'Talon', 'Ash', 'Blaze', 'Fizz', 'Cinder', 'Spark', 'Mossy', 'Frost', 'Glimmer',
               'Rune', 'Sable', 'Zephyr', 'Pebble', 'Sprout', 'Nova', 'Comet', 'Smudge', 'Bramble', 'Ziggy', 'Onyx')
 HATCH_TYPES = {'common': (('RED', 34), ('BLUE', 33), ('GREEN', 33)),
                'uncommon': (('RED', 20), ('BLUE', 20), ('GREEN', 20), ('FOREST', 20), ('YELLOW', 20), ('ALIEN', 15)),
-               'rare': (('FOREST', 20), ('YELLOW', 20), ('SILVER', 20), ('CLOCKWORK', 15), ('COCKATRICE', 15), ('BLUE', 10), ('EAGLE', 15)),
-               'epic': (('SILVER', 20), ('CLOCKWORK', 20), ('CHINESE', 15), ('WRAITH', 15), ('SKELETAL', 15), ('COCKATRICE', 15), ('FEY', 15)),
+               'rare': (('FOREST', 20), ('YELLOW', 20), ('SILVER', 20), ('CLOCKWORK', 15), ('COCKATRICE', 15), ('BLUE', 10), ('EAGLE', 15), ('RAVEN', 15)),
+               'epic': (('PERYTON', 15), ('SILVER', 20), ('CLOCKWORK', 20), ('CHINESE', 15), ('WRAITH', 15), ('SKELETAL', 15), ('COCKATRICE', 15), ('FEY', 15)),
                'legendary': (('CHINESE', 20), ('SKELETAL', 20), ('COSMIC', 20), ('UNICORN', 20), ('WRAITH', 20), ('WHALE', 20))}
-OLD_BABY_TYPE = {'common': 'GREEN', 'uncommon': 'BLUE', 'rare': 'CHRONO', 'epic': 'YELLOW', 'legendary': 'SKELETAL'}
+OLD_BABY_TYPE = {'common': 'GREEN', 'uncommon': 'BLUE', 'rare': 'FOREST', 'epic': 'YELLOW', 'legendary': 'SKELETAL'}
 PET_RARITY_POWER = {'common': 1.0, 'uncommon': 1.15, 'rare': 1.3, 'epic': 1.5, 'legendary': 1.8}
 PET_FEED_COST = 40
 PET_MAX_LEVEL = 10
@@ -585,11 +671,12 @@ BOSS_RESIST = {'demon': {'RED': 0.5, 'CHINESE': 1.6, 'BLUE': 1.6, 'SILVER': 1.6}
 DEN_RECT = pygame.Rect(WIDTH // 2 - 390, 170, 780, 300)   # where the hatchlings flutter about
 HB_VIEW_BTN = pygame.Rect(WIDTH // 2 + 170, HEIGHT - 114, 200, 42)
 HB_DETAIL_BTN = pygame.Rect(WIDTH // 2 + 2, HEIGHT - 114, 156, 42)
-PET_BTNS = [pygame.Rect(WIDTH // 2 - 398 + i * 200, 508, 196, 46) for i in range(4)]
+PET_BTNS = [pygame.Rect(WIDTH // 2 - 380 + i * 260, 508, 240, 46) for i in range(3)]   # back, feed, fly with me
 ROOST_PRICES = [600, 1500, 3000]          # 2nd, 3rd and 4th roost
 MAX_ROOSTS = 4
 EGG_GRID = pygame.Rect(WIDTH // 2 - 370, 112, 740, 342)
 EGG_CARD = (170, 168, 20, 184)            # w, h, column gap, row pitch (4 columns)
+HB_SCROLL = pygame.Rect(EGG_GRID.right + 18, EGG_GRID.top + 4, 14, EGG_GRID.h - 8)   # the Nursery's scroll bar
 EGG_ROOST_BTN = pygame.Rect(WIDTH - 214, HEIGHT - 110, 198, 44)
 EGG_BACK_BTN = pygame.Rect(WIDTH // 2 - 360, HEIGHT - 80, 200, 45)
 HEARTH_K = min(WIDTH / 1672.0, 0.806)          # scale of your hearth-room picture (it is drawn from the top of the screen)
@@ -615,11 +702,16 @@ def info_rect(box):
 
 INFO_PORTRAIT = info_rect((354, 246, 916, 648))     # inside your gold picture frame
 INFO_PANEL = info_rect((982, 246, 1516, 648))       # inside your dark stats panel
-INFO_BACK = pygame.Rect(WIDTH // 2 - 290, 508, 260, 46)
-INFO_SELECT = pygame.Rect(WIDTH // 2 + 30, 508, 260, 46)
-OPT_KEYS = ["music", "sfx", "display", "weather", "difficulty", "shake", "vibrate"]
-OPT_RECTS = {k: pygame.Rect(WIDTH // 2 - 262, 127 + i * 46, 506, 42) for i, k in enumerate(OPT_KEYS)}   # rows on the hanging parchment
+INFO_BACK = pygame.Rect(WIDTH // 2 - 400, 508, 240, 46)
+ACH_BTN = pygame.Rect(WIDTH // 2 + 214, 470, 230, 46)     # Quests board -> the Achievements page
+INFO_LEVELS = pygame.Rect(WIDTH // 2 - 120, 508, 240, 46)    # dragon details: the level rewards page
+INFO_SELECT = pygame.Rect(WIDTH // 2 + 160, 508, 240, 46)
+OPT_KEYS = ["music", "sfx", "display", "weather", "difficulty", "shake", "vibrate", "hand"]
+OPT_RECTS = {k: pygame.Rect(WIDTH // 2 - 262, 112 + i * 37, 506, 35) for i, k in enumerate(OPT_KEYS)}   # rows on the hanging parchment
 OPT_SLIDERS = ("music", "sfx")              # these rows are 0-100 volume sliders
+
+
+SAVE_BTNS = {'backup': pygame.Rect(WIDTH // 2 - 230, 418, 220, 32), 'restore': pygame.Rect(WIDTH // 2 + 10, 418, 220, 32)}   # save backup buttons on Options
 
 
 def slider_track(r):
@@ -627,8 +719,16 @@ def slider_track(r):
   return r.right - 248, r.right - 76, r.centery
 MENU_RECTS = {k: (pygame.Rect(WIDTH // 2 - 200, 222, 400, 66) if k == "play" else pygame.Rect(WIDTH // 2 - 160, 302 + (i - 1) * 56, 320, 48)) for i, (k, *_r) in enumerate(MENU_ITEMS)}
 
-SELECT_BOXES = [(k, pygame.Rect(WIDTH // 2 - 402 + (i % 4) * 202, 112 + (i // 4) * 178, 190, 172)) for i, k in enumerate(("RED", "BLUE", "GREEN", "FOREST", "YELLOW", "SILVER", "ALIEN", "EAGLE"))]   # stalls in the barn
-RARE_BOXES = [(k, pygame.Rect(WIDTH // 2 - 424 + (i % 5) * 172, 112 + (i // 5) * 172, 160, 162)) for i, k in enumerate(("CHINESE", "SKELETAL", "COSMIC", "UNICORN", "WRAITH", "CLOCKWORK", "COCKATRICE", "FEY", "WHALE"))]
+def _roster_boxes(keys, cols, w, h, pitch_y):
+  keys = sorted(keys, key=lambda k: (DRAGON_PALETTES[k]['cost'], k))          # cheapest first
+  gap = 12
+  w = min(w, (WIDTH - 60) // cols - gap)
+  x0 = WIDTH // 2 - (cols * (w + gap) - gap) // 2
+  return [(k, pygame.Rect(x0 + (i % cols) * (w + gap), 112 + (i // cols) * pitch_y, w, h)) for i, k in enumerate(keys)]
+
+
+SELECT_BOXES = _roster_boxes(("RED", "BLUE", "GREEN", "FOREST", "YELLOW", "SILVER", "EAGLE", "RAVEN", "PERYTON", "WRAITH"), 5, 172, 162, 172)   # stalls in the barn
+RARE_BOXES = _roster_boxes(("ALIEN", "CHINESE", "SKELETAL", "COSMIC", "UNICORN", "CLOCKWORK", "COCKATRICE", "FEY", "WHALE"), 5, 172, 162, 172)
 UPGRADES = [("thick_scales", "Thick Scales", "Max Shields +1", pygame.Rect(WIDTH // 2 - 430, 172, 240, 330)),
       ("deep_lungs", "Deep Lungs", "Breath Duration +1s", pygame.Rect(WIDTH // 2 - 120, 172, 240, 330)),
       ("coin_magnet", "Coin Magnet", "Pulls Nearby Coins", pygame.Rect(WIDTH // 2 + 190, 172, 240, 330))]   # one column per anvil
@@ -651,15 +751,26 @@ def report_rect(box):
 REPORT_LIST = report_rect((322, 318, 770, 655))   # scrollable foes list: the left parchment
 REPORT_BACK = report_rect((622, 745, 1048, 806))  # the red button plate under the parchments
 REPORT_ROW = 30
-REPORT_BTN = pygame.Rect(WIDTH // 2 - 200, HEIGHT // 2 + 70, 230, 44)     # on the game-over panel
-OVER_MENU_BTN = pygame.Rect(WIDTH // 2 + 44, HEIGHT // 2 + 70, 156, 44)
+RETRY_BTN = pygame.Rect(WIDTH // 2 - 150, 352, 300, 47)      # on the game-over panel, stacked top to bottom
+REPORT_BTN = pygame.Rect(WIDTH // 2 - 150, 402, 300, 47)
+OVER_MENU_BTN = pygame.Rect(WIDTH // 2 - 150, 452, 300, 47)
 PX_PER_M = 12.0                   # scrolled pixels per metre flown
 KILL_KEY = {'towers': 'tower', 'catapults': 'catapult', 'trebuchets': 'trebuchet', 'archers': 'archer', 'ballistas': 'ballista', 'golems': 'golem', 'cyclopes': 'cyclops'}
 SEL_BACK_BTN = pygame.Rect(WIDTH // 2 - 130, HEIGHT - 55, 260, 40)
 RARE_BTN = pygame.Rect(WIDTH // 2 + 170, 464, 176, 46)
 PAUSE_BTN = pygame.Rect(WIDTH - 110, GROUND_Y - 46, 95, 35)
-SHIELD_BTN = pygame.Rect(15, 480, 140, 50)
-DASH_BTN = pygame.Rect(15, 424, 140, 50)
+SHIELD_BTN = pygame.Rect(15, 480, 176, 50)
+DASH_BTN = pygame.Rect(15, 424, 176, 50)
+ULT_BTN = pygame.Rect(201, 480, 176, 50)       # level 20: unleash the Ultimate
+CHARGE_X = [15]                              # left edge of the shield-charge bar (moves over in left-hand mode)
+
+
+def apply_hand(lefty):
+  """Left-hand mode: Shield / Dash and the charge bar move to the right side, PAUSE to the left."""
+  SHIELD_BTN.x = DASH_BTN.x = (WIDTH - 15 - SHIELD_BTN.w) if lefty else 15
+  ULT_BTN.x = (WIDTH - 25 - SHIELD_BTN.w - ULT_BTN.w) if lefty else 25 + SHIELD_BTN.w
+  PAUSE_BTN.x = 15 if lefty else WIDTH - 110
+  CHARGE_X[0] = (WIDTH - 15 - 44) if lefty else 15
 DASH_COOLDOWN = 600
 DASH_SPEED = 30
 DASH_REACH = 400

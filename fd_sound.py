@@ -240,8 +240,8 @@ def loop_gale():
 
 LOOPS = {'fire': loop_fire, 'wind': loop_wind, 'zap': loop_zap, 'hiss': loop_hiss, 'acid': loop_acid, 'rain': loop_rain, 'gale': loop_gale}
 LOOP_GAIN = {'fire': 0.7, 'wind': 0.5, 'zap': 1.3, 'hiss': 0.8, 'acid': 0.85, 'rain': 0.3, 'gale': 0.3}
-BREATH_LOOP = {'RED': 'fire', 'CHINESE': 'hiss', 'BLUE': 'wind', 'CLOCKWORK': 'wind', 'FOREST': 'wind', 'COCKATRICE': 'wind', 'SILVER': 'wind', 'CHRONO': 'wind', 'YELLOW': 'zap', 'GREEN': 'acid', 'SKELETAL': 'hiss', 'WRAITH': 'hiss', 'WHALE': 'wind', 'FEY': 'zap', 'ALIEN': 'acid', 'EAGLE': 'wind'}
-WEATHER_LOOP = {'rain': 'rain', 'storm': 'rain', 'wind': 'gale'}
+BREATH_LOOP = {'RED': 'fire', 'CHINESE': 'hiss', 'BLUE': 'wind', 'CLOCKWORK': 'wind', 'FOREST': 'wind', 'COCKATRICE': 'wind', 'SILVER': 'wind', 'CHRONO': 'wind', 'YELLOW': 'zap', 'GREEN': 'acid', 'SKELETAL': 'hiss', 'WRAITH': 'hiss', 'WHALE': 'wind', 'FEY': 'zap', 'ALIEN': 'acid', 'EAGLE': 'wind', 'RAVEN': 'wind', 'PERYTON': 'wind'}
+WEATHER_LOOP = {'rain': 'rain', 'storm': 'rain', 'wind': 'gale', 'sand': 'gale'}
 
 
 # ---------------------------------------------------------------- music: lofi medieval "Tavern Tape"
@@ -421,6 +421,9 @@ class Audio:
     self.music_level = 1.0                  # 0..1 from the options slider
     self.sfx_level = 1.0
     self.theme = None                       # pre-rendered theme (Sound objects) when available
+    self.track, self.want_track = 'theme', 'theme'   # which song is playing / wanted (world themes, boss music)
+    self.tracks = {}                        # key -> (Sound, muffled Sound), decoded in the background
+    self.track_queue = []
     self.last = {}
     try:
       info = pygame.mixer.get_init()
@@ -514,6 +517,10 @@ class Audio:
     if not self.ok or self.thread is not None:
       return
 
+    try:                                      # load the world / boss songs module now (not mid-run)
+      import fd_tracks
+    except Exception:
+      pass
     try:                                      # the pre-rendered theme (OGG), decoded here on the main thread
       import io
       from fd_music import theme_bytes
@@ -541,6 +548,65 @@ class Audio:
     self.thread = threading.Thread(target=work)
     self.thread.daemon = True
     self.thread.start()
+
+  def preload(self, *keys):
+    """queue world / boss songs; tick() decodes them one at a time on the main thread
+    (decoding in a background thread can lock up the phone's audio)"""
+    if not self.ok:
+      return
+    for k in keys:
+      if k and k != 'theme' and k not in self.tracks and k not in self.track_queue:
+        self.track_queue.append(k)
+
+  def _load_one(self, k):
+    import io
+    try:
+      from fd_tracks import track_bytes
+      main = pygame.mixer.Sound(file=io.BytesIO(track_bytes(k)))
+      try:
+        muf = pygame.mixer.Sound(file=io.BytesIO(track_bytes(k, True)))
+      except Exception:
+        muf = None
+      self.tracks[k] = (main, muf)
+    except Exception:
+      self.tracks[k] = None                  # (missing or can't decode: keep the current song)
+    if k in self.track_queue:
+      self.track_queue.remove(k)
+
+  def _load_queued(self):
+    pass                                     # (no longer used: see tick)
+
+  def set_track(self, key):
+    """'theme' (Dragon's Hearth), a world key, 'boss' or 'boss_final'"""
+    if key != self.want_track:
+      self.want_track = key
+      if key != 'theme' and key not in self.tracks:
+        self.preload(key)
+        if self.track_queue and self.track_queue[0] != key:   # the song wanted now goes first
+          self.track_queue.remove(key)
+          self.track_queue.insert(0, key)
+
+  def _switch_track(self):
+    k = self.want_track
+    if k == 'theme':
+      pair = self.theme
+    else:
+      if k not in self.tracks:
+        return                                # still decoding: switch when it's ready
+      pair = self.tracks.get(k)
+    if not pair or not self.music_chan:
+      self.track = k
+      return
+    self.music, muf = pair
+    self.muffled = muf if self.muf_chan else None
+    self.track = k
+    self._music_mix()
+    self.music_chan.play(self.music, loops=-1, fade_ms=700)
+    if self.muf_chan:
+      if self.muffled:
+        self.muf_chan.play(self.muffled, loops=-1, fade_ms=700)
+      else:
+        self.muf_chan.stop()
 
   def synth_music(self):
     """fallback: the old in-code tavern tune"""
@@ -616,6 +682,10 @@ class Audio:
             self.muf_chan.play(self.muffled, loops=-1)
         else:
           self.music = False
+      if self.music is not None and self.track_queue:   # decode one queued song per frame (main thread)
+        self._load_one(self.track_queue[0])
+      if self.music and self.track != self.want_track and (self.theme or self.want_track != 'theme'):
+        self._switch_track()
       if self.muffled and abs(self.muf - self.muf_want) > 0.001:
         self.muf += max(-0.06, min(0.06, self.muf_want - self.muf))
         self._music_mix()

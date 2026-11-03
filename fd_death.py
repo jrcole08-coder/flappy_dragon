@@ -266,6 +266,52 @@ class BoneDeath:
       pygame.draw.circle(gs, (int(240 * f + 40 * (1 - f)),) * 3, (int(bx + ca), int(by + sa)), 2)
 
 
+class CosmicDeath:
+  """Cosmic dragon's death (from your animation): it flares with starlight, collapses into a bright star
+  in the air and bursts into stardust."""
+  STEP = 4
+
+  def __init__(self, x, y, ground_y):
+    from fd_cosmic import void_death, FRAMES
+    self.frame = void_death
+    self.n = FRAMES['death'][0]
+    self.x, self.y = float(x), float(y)
+    self.t = 0
+    self.done = False
+    self.landed = None
+    self.dust = []
+
+  def update(self, game):
+    self.t += 1
+    self.y += 0.25                                  # hangs in the sky as it dies
+    end = self.n * self.STEP
+    cx, cy = self.x + 84, self.y + 50
+    if self.t % 3 == 0 and self.t < end:
+      game.emit(cx + random.uniform(-40, 40), cy + random.uniform(-30, 30), random.uniform(-1, 1), random.uniform(-1, 1), random.randint(3, 6),
+                random.choice(((255, 255, 255), (200, 160, 255), (140, 110, 255))))
+    if self.t == end:                               # the star bursts into stardust
+      game.shake_for(8, 10)
+      for _ in range(40):
+        a = random.uniform(0, math.tau)
+        sp = random.uniform(2, 7)
+        self.dust.append([cx + 20, cy + 6, math.cos(a) * sp, math.sin(a) * sp, random.choice(((255, 255, 255), (210, 180, 255), (150, 120, 255), (255, 230, 160)))])
+    for p in self.dust:
+      p[0] += p[2]; p[1] += p[3]; p[2] *= 0.96; p[3] *= 0.96
+    if self.t > end + 50:
+      self.done = True
+
+  def draw(self, gs):
+    if self.done:
+      return
+    end = self.n * self.STEP
+    if self.t < end:
+      gs.blit(self.frame(self.t // self.STEP), (int(self.x), int(self.y)))
+    f = max(0.0, 1 - (self.t - end) / 50.0)
+    for p in self.dust:
+      c = tuple(int(v * f) for v in p[4])
+      pygame.draw.circle(gs, c, (int(p[0]), int(p[1])), 2)
+
+
 SHEET_DEATH_COLS = {
   'RED': ((255, 236, 110), (255, 150, 30), (230, 70, 10), (60, 40, 36)),
   'BLUE': ((240, 252, 255), (170, 225, 255), (90, 160, 230), (200, 220, 235)),
@@ -279,6 +325,8 @@ SHEET_DEATH_COLS = {
   'WRAITH': ((230, 255, 255), (140, 240, 255), (70, 170, 200), (40, 90, 120)),
   'ALIEN': ((200, 255, 150), (120, 240, 70), (60, 170, 40), (20, 60, 24)),
   'EAGLE': ((255, 240, 190), (240, 200, 100), (190, 140, 50), (110, 80, 30)),
+  'RAVEN': ((230, 200, 255), (160, 90, 220), (70, 50, 100), (30, 26, 40)),
+  'PERYTON': ((255, 220, 200), (240, 80, 80), (120, 40, 50), (50, 44, 52)),
   'WHALE': ((255, 255, 255), (200, 180, 255), (120, 90, 220), (120, 255, 230)),
   'FEY': ((255, 255, 200), (255, 150, 240), (140, 240, 255), (180, 255, 160)),
   'UNICORN': ((255, 80, 80), (255, 230, 80), (80, 220, 110), (90, 150, 255), (190, 90, 255), (255, 255, 255)),
@@ -303,7 +351,7 @@ class SheetDeath:
     self.done = False
     self.n = self.sh.count('death')
     self.alpha = 255
-    self.floats = key in ('WRAITH', 'YELLOW', 'FOREST', 'COCKATRICE', 'WHALE', 'FEY', 'EAGLE')   # dissolves in the air instead of falling
+    self.floats = key in ('WRAITH', 'YELLOW', 'FOREST', 'COCKATRICE', 'WHALE', 'FEY', 'EAGLE', 'RAVEN', 'PERYTON')   # dissolves in the air instead of falling
     self.land_at = {'GREEN': 5, 'SILVER': 6, 'ALIEN': 4}.get(key)         # the Acid Dragon only melts into its puddle once it hits the ground
 
   def _fi(self):
