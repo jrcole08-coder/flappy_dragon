@@ -593,7 +593,7 @@ def prewarm_dragon(key):
     pass
 
 
-FLAP_REST = {'ALIEN': 0, 'EAGLE': 0, 'WHALE': 0, 'FEY': 0, 'SILVER': 3, 'COCKATRICE': 2, 'GREEN': 2, 'YELLOW': 0, 'FOREST': 2, 'CLOCKWORK': 3, 'CHINESE': 0, 'WRAITH': 7, 'SKELETAL': 3, 'COSMIC': 0, 'RED': 2, 'BLUE': 2, 'UNICORN': 14}   # wings-up frame each flap starts from
+FLAP_REST = {'ALIEN': 0, 'EAGLE': 0, 'RAVEN': 0, 'PERYTON': 0, 'WHALE': 0, 'FEY': 0, 'SILVER': 3, 'COCKATRICE': 2, 'GREEN': 2, 'YELLOW': 0, 'FOREST': 2, 'CLOCKWORK': 3, 'CHINESE': 0, 'WRAITH': 7, 'SKELETAL': 3, 'COSMIC': 0, 'RED': 2, 'BLUE': 2, 'UNICORN': 14}   # wings-up frame each flap starts from
 
 
 def flap_cycle(key):
@@ -616,16 +616,24 @@ def breath_origin(key, d, flap_ph, vel, pitch):
   return d.x + 92 + mox, d.y + 4 - int(pitch * 0.4) + moy
 
 
+_FIRE_T0 = {}                                         # when each dragon's current breath started (its breath frames start from frame 0)
+
+
 def draw_any_dragon(surface, key, x, y, tilt, wing, fire=False, flapping=False):
   """Pixel-art dragon. (x, y) is the top-left of the 65x38 hitbox. While a wing beat is playing
   (flapping) the flight frames show even during breath, so every tap flaps the wings."""
   tb = max(-2, min(2, int(round(tilt / 6.0))))
-  if fire and ((flapping and key != "WHALE") or key == "UNICORN"):   # (the whale has no wings: its jaws stay open)
+  if fire and ((flapping and key not in ("WHALE", "SILVER")) or key == "UNICORN"):   # (the whale's jaws and the wind dragon's gust stay on while you flap)
     fire = False
   if has_sheet(key):                                     # Magma / Ice / Evil Unicorn: your full flap + breath loops
     sh = sheet(key)
     name = 'breath' if fire else 'fly'
-    i = (sh.breath_index() if fire else sh.fly_index(wing)) % sh.count(name)
+    if fire:
+      t0 = _FIRE_T0.setdefault(key, pygame.time.get_ticks())
+    else:
+      _FIRE_T0.pop(key, None)
+      t0 = None
+    i = (sh.breath_index(t0) if fire else sh.fly_index(wing)) % sh.count(name)
     k = (key, name, i, tb)
     spr = SPRITE_CACHE.get(k)
     if spr is None:

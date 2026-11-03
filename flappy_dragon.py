@@ -1,5 +1,5 @@
 """
-Flappy Dragon: Siege Master  --  run THIS file.
+Raid the Realm: Dragon Siege  --  run THIS file.
 Keep fd_core.py, fd_art.py, fd_logic.py and fd_draw.py in the same folder.
 """
 import pygame
