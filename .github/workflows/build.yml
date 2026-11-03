@@ -39,15 +39,152 @@ jobs:
           path: |
             ~/.buildozer
             .buildozer
-          key: buildozer-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-v1-${{ hashFiles('.github/workflows/build.yml') }}
 
       - name: Use the same signing key every time (so friends can update without losing their save)
         run: |
           mkdir -p ~/.android
-          cp debug.keystore ~/.android/debug.keystore
+          base64 -d -i > ~/.android/debug.keystore <<'KEY'
+          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
+          KEY
+          ls -la ~/.android/debug.keystore
 
-      - name: Give this build its own version number
-        run: sed -i "s/^version = .*/version = 0.2.${{ github.run_number }}/" buildozer.spec
+      - name: Write the build settings (buildozer.spec)
+        run: |
+          cat > buildozer.spec <<'SPEC'
+          [app]
+          title = Flappy Dragon
+          package.name = flappydragon
+          package.domain = org.dragon
+          source.dir = .
+          source.include_exts = py
+          source.exclude_dirs = .github, bin, .buildozer, out
+          version = 0.2.0
+          requirements = hostpython3==3.10.14,python3==3.10.14,pygame,pyjnius
+          orientation = landscape
+          fullscreen = 1
+          android.permissions = VIBRATE
+          android.api = 33
+          android.minapi = 21
+          android.archs = arm64-v8a, armeabi-v7a
+          android.accept_sdk_license = True
+          android.allow_backup = True
+          p4a.branch = develop
+
+          [buildozer]
+          log_level = 2
+          warn_on_root = 1
+          SPEC
+          # the icon and loading screen are used only if they were uploaded
+          if [ -f icon.png ]; then sed -i "/^\[buildozer\]/i icon.filename = %(source.dir)s/icon.png" buildozer.spec; fi
+          if [ -f presplash.jpg ]; then sed -i "/^\[buildozer\]/i presplash.filename = %(source.dir)s/presplash.jpg\nandroid.presplash_color = #0B0A14" buildozer.spec; fi
+          sed -i "s/^version = .*/version = 0.3.${{ github.run_number }}/" buildozer.spec
+          echo 'BUILD = "beta 0.3.${{ github.run_number }}"' > fd_build.py
+          ls *.py | wc -l
+          cat buildozer.spec
+
+      - name: Write the start-up files and check every game file is here
+        run: |
+          [ -f main.py ] || printf 'import flappy_dragon\nflappy_dragon.main()\n' > main.py
+          if [ ! -f flappy_dragon.py ]; then
+          cat > flappy_dragon.py <<'START'
+          """
+          Flappy Dragon: Siege Master  --  run THIS file.
+          Keep fd_core.py, fd_art.py, fd_logic.py and fd_draw.py in the same folder.
+          """
+          import pygame
+          import os
+          import sys
+          try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+          except NameError:
+            sys.path.insert(0, os.getcwd())
+          pygame.mixer.pre_init(22050, -16, 1, 512)
+          pygame.init()
+          from fd_core import *
+          from fd_art import *
+          from fd_logic import GameLogic
+          from fd_draw import GameDraw
+
+          class Game(GameLogic, GameDraw):
+            pass
+
+          def main():
+            Game().run()
+
+          if __name__ == "__main__":
+            main()
+
+          START
+          fi
+          missing=""
+          for f in \
+            fd_alien.py fd_art.py fd_baby.py fd_babyart.py fd_beholder.py fd_bestart.py \
+            fd_bone.py fd_boss.py fd_clockwork.py fd_cockatrice.py fd_core.py fd_cosmic.py \
+            fd_cyclops.py fd_death.py fd_draw.py fd_eagle.py fd_eggart.py fd_eggs.py \
+            fd_enemy_anims.py fd_env.py fd_extra.py fd_fey.py fd_foes.py fd_folk.py \
+            fd_forest.py fd_forest_dragon.py fd_forgeart.py fd_hd.py fd_hearthart.py fd_hydra.py \
+            fd_ice.py fd_infoart.py fd_items.py fd_jabber.py fd_lairart.py fd_lightning.py \
+            fd_logic.py fd_lung.py fd_mages.py fd_magma.py fd_menuart.py fd_music.py \
+            fd_night.py fd_optart.py fd_phoenix.py fd_pixart.py fd_poison.py fd_questart.py \
+            fd_reportart.py fd_satyr.py fd_sheet.py fd_siege.py fd_sound.py fd_stableart.py \
+            fd_towers.py fd_ui.py fd_unicorn.py fd_villagers.py fd_whale.py fd_wind.py \
+            fd_witch.py fd_wraith.py \
+            fd_font.py fd_extras.py fd_levelart.py fd_world_desert.py fd_skyart.py fd_world_swamp.py fd_world_frozen.py fd_world_volcano.py fd_world_skyisle.py fd_world_void.py fd_spider.py fd_modes.py fd_ground.py fd_tracks.py fd_raven.py fd_peryton.py fd_newfoes.py fd_foes2.py fd_boss2.py fd_perks.py fd_achieve.py fd_isles.py fd_goart.py fd_ultfx.py; do
+            [ -f "$f" ] || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "These game files are MISSING - upload them to the repository:"
+            for f in $missing; do echo "   $f"; done
+            exit 1
+          fi
+          echo "All game files are here."
 
       - name: Build APK
         run: yes | buildozer -v android debug
